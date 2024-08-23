@@ -100,6 +100,7 @@ export class DefaultSelectLogStreamWizardContext implements SelectLogStreamWizar
         const searchLogGroupItems: vscode.QuickPickItem[] = [
             { label: 'Actions', kind: vscode.QuickPickItemKind.Separator },
             { label: 'Search Log Group', detail: 'Search all Log Streams in this Log Group' },
+            { label: 'Tail Log Group', detail: 'Live tail all Log Streams in this Log Group' },
             { label: 'Log Streams', kind: vscode.QuickPickItemKind.Separator },
         ]
 

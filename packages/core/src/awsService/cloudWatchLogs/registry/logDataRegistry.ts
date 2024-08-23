@@ -95,7 +95,7 @@ export class LogDataRegistry {
             return []
         }
 
-        const stream = pageableToCollection(
+        const strewam = pageableToCollection(
             (r: typeof request) =>
                 logData.retrieveLogsFunction(
                     logData.logGroupInfo,

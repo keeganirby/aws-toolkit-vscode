@@ -19,6 +19,7 @@ import { searchLogGroup } from './commands/searchLogGroup'
 import { changeLogSearchParams } from './changeLogSearch'
 import { CloudWatchLogsNode } from './explorer/cloudWatchLogsNode'
 import { loadAndOpenInitialLogStreamFile, LogStreamCodeLensProvider } from './document/logStreamsCodeLensProvider'
+import { tailLogGroup } from './commands/tailLogGroup'
 
 export async function activate(context: vscode.ExtensionContext, configuration: Settings): Promise<void> {
     const registry = LogDataRegistry.instance
@@ -29,6 +30,16 @@ export async function activate(context: vscode.ExtensionContext, configuration: 
         vscode.languages.registerCodeLensProvider(
             {
                 language: 'log',
+                scheme: CLOUDWATCH_LOGS_SCHEME,
+            },
+            new LogStreamCodeLensProvider(registry, documentProvider)
+        )
+    )
+
+    context.subscriptions.push(
+        vscode.languages.registerCodeLensProvider(
+            {
+                language: 'log-tail',
                 scheme: CLOUDWATCH_LOGS_SCHEME,
             },
             new LogStreamCodeLensProvider(registry, documentProvider)
@@ -85,6 +96,14 @@ export async function activate(context: vscode.ExtensionContext, configuration: 
                     : undefined
             const source = node ? (logGroupInfo ? 'ExplorerLogGroupNode' : 'ExplorerServiceNode') : 'Command'
             await searchLogGroup(registry, source, logGroupInfo)
+        }),
+
+        Commands.register('aws.cwl.tailLogGroup', async (node: LogGroupNode | CloudWatchLogsNode) => {
+            const logGroupInfo =
+                node instanceof LogGroupNode
+                    ? { regionName: node.regionCode, groupName: node.logGroup.logGroupName! }
+                    : undefined
+            await tailLogGroup(logGroupInfo)
         }),
 
         Commands.register('aws.cwl.changeFilterPattern', async () => changeLogSearchParams(registry, 'filterPattern')),
