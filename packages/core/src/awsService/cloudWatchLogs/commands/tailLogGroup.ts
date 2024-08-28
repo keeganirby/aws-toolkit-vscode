@@ -6,41 +6,46 @@
 import * as vscode from 'vscode'
 import * as nls from 'vscode-nls'
 import { Wizard } from '../../../shared/wizards/wizard'
-import { CloudWatchLogsGroupInfo, CloudWatchLogsParameters, LogDataRegistry } from '../registry/logDataRegistry'
-import { createQuickPick, DataQuickPickItem, QuickPickPrompter } from '../../../shared/ui/pickerPrompter'
-import { getLogger, truncate } from '../../../shared'
+import { CloudWatchLogsGroupInfo } from '../registry/logDataRegistry'
+import { createQuickPick, DataQuickPickItem } from '../../../shared/ui/pickerPrompter'
+import { truncate } from '../../../shared'
 import { createInputBox } from '../../../shared/ui/inputPrompter'
 import { RegionSubmenu, RegionSubmenuResponse } from '../../../shared/ui/common/regionSubmenu'
 import { DefaultCloudWatchLogsClient } from '../../../shared/clients/cloudWatchLogsClient'
 import { CloudWatchLogs } from 'aws-sdk'
 import { createBackButton, createExitButton, createHelpButton } from '../../../shared/ui/buttons'
 import { createURIFromArgs } from '../cloudWatchLogsUtils'
+import { CancellationError } from '../../../shared/utilities/timeoutUtils'
 
 const localize = nls.loadMessageBundle()
 
 export async function tailLogGroup(logData?: { regionName: string; groupName: string }): Promise<void> {
     const wizard = new TailLogGroupWizard(logData)
     const response = await wizard.run()
+    if (!response) {
+        throw new CancellationError('user')
+    }
+
+    const logGroupName = response.regionLogGroupSubmenuResponse.data
+    const regionName = response.regionLogGroupSubmenuResponse.region
+    const logStreamPrefix = response.logStreamPrefix
+    const filterPattern = response.filterPattern
 
     console.log('Printing prompter responses...')
-    console.log('Selected LogGroup: ' + response?.regionLogGroupSubmenuResponse.data)
-    console.log('Selected Region: ' + response?.regionLogGroupSubmenuResponse.region)
-    console.log('Selected LogStream Prefix: ' + response?.logStreamPrefix)
-    console.log('Selected FilterPattern: ' + response?.filterPattern)
+    console.log('Selected LogGroup: ' + logGroupName)
+    console.log('Selected Region: ' + regionName)
+    console.log('Selected LogStream Prefix: ' + logStreamPrefix)
+    console.log('Selected FilterPattern: ' + filterPattern)
 
     const uri = createURIFromArgs(
         {
-            groupName: response?.regionLogGroupSubmenuResponse.data,
-            regionName: response?.regionLogGroupSubmenuResponse.region,
+            groupName: logGroupName,
+            regionName: regionName,
         },
         {}
     )
     await prepareDocument(uri)
-    await displayTailingSessionDialogueWindow(
-        response?.regionLogGroupSubmenuResponse.data,
-        response?.logStreamPrefix,
-        response?.filterPattern
-    )
+    await displayTailingSessionDialogueWindow(logGroupName, logStreamPrefix, filterPattern)
 }
 
 export interface TailLogGroupWizardResponse {
@@ -63,9 +68,12 @@ export class TailLogGroupWizard extends Wizard<TailLogGroupWizardResponse> {
         })
         // this.form.logGroup.bindPrompter((state) => createLogGroupSubmenu())
         this.form.regionLogGroupSubmenuResponse.bindPrompter(createRegionLogGroupSubmenu)
-        this.form.logStreamPrefix.bindPrompter((state) =>
-            createLogStreamPrompter(state.regionLogGroupSubmenuResponse?.data)
-        )
+        this.form.logStreamPrefix.bindPrompter((state) => {
+            if (!state.regionLogGroupSubmenuResponse?.data) {
+                throw Error('LogGroupName is null')
+            }
+            return createLogStreamPrompter(state.regionLogGroupSubmenuResponse.data)
+        })
         this.form.filterPattern.bindPrompter((state) => createFilterPatternPrompter())
     }
 }
@@ -122,7 +130,7 @@ export function createLogStreamPrompter(logGroup: string) {
 
     const quickPickItems: DataQuickPickItem<string>[] = defaultItem.concat(logStreamQuickPickItems)
     return createQuickPick(quickPickItems, {
-        title: `Provide Log Stream prefix for '${truncate(logGroup, 25)}'`,
+        title: `(Optional) Provide Log Stream prefix for '${truncate(logGroup, 25)}'`,
         canPickMany: true,
         placeholder: '(Optional) Select a specific Log Stream or provide Log Stream prefix',
         buttons: [createBackButton(), createExitButton()],
