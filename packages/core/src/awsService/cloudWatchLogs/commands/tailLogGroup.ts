@@ -230,6 +230,11 @@ async function handleLiveTailResponse(response: StartLiveTailCommandOutput, text
                     await addLiveTailLogEventToTextDocument(logEvent, edit, textDocument)
                 }
                 await vscode.workspace.applyEdit(edit)
+                const shouldScroll = shouldScrollTextDocument(textDocument)
+                console.log(`Should scroll: ${shouldScroll}`)
+                if (shouldScroll) {
+                    scrollTextDocument(textDocument)
+                }
             } else {
                 console.error('Unknown event type')
             }
@@ -259,4 +264,31 @@ function formatLogEvent(logEvent: LiveTailSessionLogEvent): string {
         line = line.concat('\n')
     }
     return line
+}
+
+function shouldScrollTextDocument(textDocument: vscode.TextDocument): boolean {
+    const editor = getEditorFromTextDocument(textDocument)
+    const lineCount = textDocument.lineCount
+    const listLinePos = new vscode.Position(lineCount - 1, 0)
+    const visibleRange = editor?.visibleRanges[0]
+    if (visibleRange?.contains(listLinePos)) {
+        return true
+    }
+    return false
+}
+
+function scrollTextDocument(textDocument: vscode.TextDocument) {
+    const editor = getEditorFromTextDocument(textDocument)
+    const topPosition = new vscode.Position(Math.max(editor.document.lineCount - 2, 0), 0)
+    const bottomPosition = new vscode.Position(Math.max(editor.document.lineCount - 2, 0), 0)
+
+    editor.revealRange(new vscode.Range(topPosition, bottomPosition), vscode.TextEditorRevealType.InCenter)
+}
+
+function getEditorFromTextDocument(textDocument: vscode.TextDocument): vscode.TextEditor {
+    const editor = vscode.window.visibleTextEditors.find((editor) => editor.document === textDocument)
+    if (!editor) {
+        throw Error('No editor for textDocument found')
+    }
+    return editor
 }
