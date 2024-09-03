@@ -8,7 +8,7 @@ import * as nls from 'vscode-nls'
 import { Wizard } from '../../../shared/wizards/wizard'
 import { CloudWatchLogsGroupInfo } from '../registry/logDataRegistry'
 import { createQuickPick, DataQuickPickItem } from '../../../shared/ui/pickerPrompter'
-import { truncate } from '../../../shared'
+import { formatDateTimestamp, truncate } from '../../../shared'
 import { createInputBox } from '../../../shared/ui/inputPrompter'
 import { RegionSubmenu, RegionSubmenuResponse } from '../../../shared/ui/common/regionSubmenu'
 import { DefaultCloudWatchLogsClient } from '../../../shared/clients/cloudWatchLogsClient'
@@ -16,6 +16,13 @@ import { CloudWatchLogs } from 'aws-sdk'
 import { createBackButton, createExitButton, createHelpButton } from '../../../shared/ui/buttons'
 import { createURIFromArgs } from '../cloudWatchLogsUtils'
 import { CancellationError } from '../../../shared/utilities/timeoutUtils'
+import {
+    CloudWatchLogsClient,
+    LiveTailSessionLogEvent,
+    StartLiveTailCommand,
+    StartLiveTailCommandOutput,
+} from '@aws-sdk/client-cloudwatch-logs'
+import { log } from 'console'
 
 const localize = nls.loadMessageBundle()
 
@@ -44,8 +51,23 @@ export async function tailLogGroup(logData?: { regionName: string; groupName: st
         },
         {}
     )
-    await prepareDocument(uri)
-    await displayTailingSessionDialogueWindow(logGroupName, logStreamPrefix, filterPattern)
+    const textDocument = await prepareDocument(uri)
+    console.log(regionName)
+    const cwClient = new CloudWatchLogsClient({ region: regionName })
+    const command = new StartLiveTailCommand({
+        logGroupIdentifiers: [logGroupName],
+    })
+    console.log('SLT Request: ')
+    console.log(command)
+    try {
+        const resp = await cwClient.send(command)
+        console.log('SLT Response')
+        console.log(resp)
+        displayTailingSessionDialogueWindow(logGroupName, logStreamPrefix, filterPattern, cwClient)
+        await handleLiveTailResponse(resp, textDocument)
+    } catch (err) {
+        console.log(err)
+    }
 }
 
 export interface TailLogGroupWizardResponse {
@@ -80,7 +102,7 @@ export class TailLogGroupWizard extends Wizard<TailLogGroupWizardResponse> {
 
 export function createRegionLogGroupSubmenu(): RegionSubmenu<string> {
     return new RegionSubmenu(
-        getLogGroups,
+        getLogGroupQuickPickOptions,
         {
             title: localize('AWS.cwl.tailLogGroup.logGroupPromptTitle', 'Select Log Group to tail'),
             buttons: [createExitButton()],
@@ -90,22 +112,28 @@ export function createRegionLogGroupSubmenu(): RegionSubmenu<string> {
     )
 }
 
-async function getLogGroups(regionCode: string) {
+async function getLogGroupQuickPickOptions(regionCode: string): Promise<DataQuickPickItem<string>[]> {
     const client = new DefaultCloudWatchLogsClient(regionCode)
-    const logGroups = await logGroupsToStringArray(client.describeLogGroups())
-    const options = logGroups.map<DataQuickPickItem<string>>((logGroupString) => ({
-        label: logGroupString,
-        data: logGroupString,
-    }))
-    return options
+    const logGroups = client.describeLogGroups()
+
+    const logGroupsOptions: DataQuickPickItem<string>[] = []
+
+    for await (const logGroupObject of logGroups) {
+        if (!logGroupObject.arn || !logGroupObject.logGroupName) {
+            throw Error('LogGroupObject name or arn undefined')
+        }
+
+        logGroupsOptions.push({
+            label: logGroupObject.logGroupName,
+            data: formatLogGroupArn(logGroupObject.arn),
+        })
+    }
+
+    return logGroupsOptions
 }
 
-async function logGroupsToStringArray(logGroups: AsyncIterableIterator<CloudWatchLogs.LogGroup>): Promise<string[]> {
-    const logGroupsArray = []
-    for await (const logGroupObject of logGroups) {
-        logGroupObject.logGroupName && logGroupsArray.push(logGroupObject.logGroupName)
-    }
-    return logGroupsArray
+function formatLogGroupArn(logGroupArn: string): string {
+    return logGroupArn.endsWith(':*') ? logGroupArn.substring(0, logGroupArn.length - 2) : logGroupArn
 }
 
 export function createLogStreamPrompter(logGroup: string) {
@@ -150,7 +178,12 @@ export function createFilterPatternPrompter() {
     })
 }
 
-function displayTailingSessionDialogueWindow(logGroup: string, logStreamPrefix: string, filter: string) {
+function displayTailingSessionDialogueWindow(
+    logGroup: string,
+    logStreamPrefix: string,
+    filter: string,
+    cwClient: CloudWatchLogsClient
+) {
     let message = `Tailing Log Group: '${logGroup}.'`
 
     if (logStreamPrefix && logStreamPrefix !== '*') {
@@ -165,8 +198,9 @@ function displayTailingSessionDialogueWindow(logGroup: string, logStreamPrefix: 
         try {
             if (item && item === stopTailing) {
                 console.log('Stop tailing button pressed')
+                cwClient.destroy()
             } else {
-                console.log('Window closed by other means')
+                console.log('Window dismissed')
             }
         } catch (e) {
             console.log('[EXCEPTION]', e)
@@ -179,4 +213,50 @@ async function prepareDocument(uri: vscode.Uri): Promise<vscode.TextDocument> {
     await vscode.window.showTextDocument(textDocument, { preview: false })
     vscode.languages.setTextDocumentLanguage(textDocument, 'log')
     return textDocument
+}
+
+async function handleLiveTailResponse(response: StartLiveTailCommandOutput, textDocument: vscode.TextDocument) {
+    if (!response.responseStream) {
+        throw Error('response is undefined')
+    }
+
+    try {
+        for await (const event of response.responseStream) {
+            if (event.sessionStart !== undefined) {
+                console.log(event.sessionStart)
+            } else if (event.sessionUpdate !== undefined) {
+                const edit = new vscode.WorkspaceEdit()
+                for (const logEvent of event.sessionUpdate.sessionResults!) {
+                    await addLiveTailLogEventToTextDocument(logEvent, edit, textDocument)
+                }
+                await vscode.workspace.applyEdit(edit)
+            } else {
+                console.error('Unknown event type')
+            }
+        }
+    } catch (err) {
+        // On-stream exceptions are captured here
+        console.error(err)
+    }
+}
+
+async function addLiveTailLogEventToTextDocument(
+    logEvent: LiveTailSessionLogEvent,
+    edit: vscode.WorkspaceEdit,
+    textDocument: vscode.TextDocument
+) {
+    edit.insert(textDocument.uri, new vscode.Position(textDocument.lineCount, 0), `${formatLogEvent(logEvent)}`)
+}
+
+function formatLogEvent(logEvent: LiveTailSessionLogEvent): string {
+    if (!logEvent.timestamp || !logEvent.message) {
+        return ''
+    }
+
+    const timestamp = formatDateTimestamp(true, new Date(logEvent.timestamp))
+    let line = timestamp.concat('\t', logEvent.message)
+    if (!line.endsWith('\n')) {
+        line = line.concat('\n')
+    }
+    return line
 }
