@@ -21,9 +21,9 @@ import {
     StartLiveTailCommand,
     StartLiveTailCommandOutput,
 } from '@aws-sdk/client-cloudwatch-logs'
+import { int } from 'aws-sdk/clients/datapipeline'
 
 const localize = nls.loadMessageBundle()
-const maxLines = 100
 
 export async function tailLogGroup(logData?: { regionName: string; groupName: string }): Promise<void> {
     const wizard = new TailLogGroupWizard(logData)
@@ -36,12 +36,14 @@ export async function tailLogGroup(logData?: { regionName: string; groupName: st
     const regionName = response.regionLogGroupSubmenuResponse.region
     const logStreamPrefix = response.logStreamPrefix
     const filterPattern = response.filterPattern
+    const maxLines = Number(response.maxLines)
 
     console.log('Printing prompter responses...')
     console.log('Selected LogGroup: ' + logGroupName)
     console.log('Selected Region: ' + regionName)
     console.log('Selected LogStream Prefix: ' + logStreamPrefix)
     console.log('Selected FilterPattern: ' + filterPattern)
+    console.log('Max lines ' + maxLines)
 
     const uri = createURIFromArgs(
         {
@@ -68,7 +70,7 @@ export async function tailLogGroup(logData?: { regionName: string; groupName: st
     try {
         const resp = await cwClient.send(command)
         displayTailingSessionDialogueWindow(logGroupName, logStreamPrefix, filterPattern, cwClient)
-        await handleLiveTailResponse(resp, textDocument)
+        await handleLiveTailResponse(resp, textDocument, maxLines)
     } catch (err) {
         console.log(err)
     }
@@ -78,6 +80,7 @@ export interface TailLogGroupWizardResponse {
     regionLogGroupSubmenuResponse: RegionSubmenuResponse<string>
     logStreamPrefix: string
     filterPattern: string
+    maxLines: string
 }
 
 export class TailLogGroupWizard extends Wizard<TailLogGroupWizardResponse> {
@@ -101,6 +104,7 @@ export class TailLogGroupWizard extends Wizard<TailLogGroupWizardResponse> {
             return createLogStreamPrompter(state.regionLogGroupSubmenuResponse.data)
         })
         this.form.filterPattern.bindPrompter((state) => createFilterPatternPrompter())
+        this.form.maxLines.bindPrompter((state) => createMaxLinesPrompter())
     }
 }
 
@@ -182,6 +186,23 @@ export function createFilterPatternPrompter() {
     })
 }
 
+function createMaxLinesPrompter() {
+    return createInputBox({
+        title: 'Provide maximum number of lines',
+        prompt: 'Enter an integer value between 1,000 and 15,000',
+        value: '1000',
+        validateInput: validateMaxLinesInput,
+    })
+}
+
+function validateMaxLinesInput(input: string) {
+    const maxLines = Number(input)
+    if (isNaN(Number(input)) || !Number.isSafeInteger(maxLines) || maxLines < 1000 || maxLines > 15000) {
+        return 'Input must be a positive integer value between 1,000 and 15,000'
+    }
+    return undefined
+}
+
 function displayTailingSessionDialogueWindow(
     logGroup: string,
     logStreamPrefix: string,
@@ -218,7 +239,11 @@ async function prepareDocument(uri: vscode.Uri): Promise<vscode.TextDocument> {
     return textDocument
 }
 
-async function handleLiveTailResponse(response: StartLiveTailCommandOutput, textDocument: vscode.TextDocument) {
+async function handleLiveTailResponse(
+    response: StartLiveTailCommandOutput,
+    textDocument: vscode.TextDocument,
+    maxLines: int
+) {
     if (!response.responseStream) {
         throw Error('response is undefined')
     }
@@ -234,7 +259,7 @@ async function handleLiveTailResponse(response: StartLiveTailCommandOutput, text
                 //Determine should scroll before adding new lines to doc because large amount of
                 //new lines can push bottom of file out of view before scrolling.
                 const shouldScroll = shouldScrollTextDocument(textDocument)
-                await updateTextDocumentWithNewLogEvents(formattedLogEvents, textDocument)
+                await updateTextDocumentWithNewLogEvents(formattedLogEvents, textDocument, maxLines)
                 console.log(`Should scroll: ${shouldScroll}`)
                 if (shouldScroll) {
                     scrollTextDocument(textDocument)
@@ -250,20 +275,29 @@ async function handleLiveTailResponse(response: StartLiveTailCommandOutput, text
     }
 }
 
-async function updateTextDocumentWithNewLogEvents(formattedLogEvents: string[], textDocument: vscode.TextDocument) {
+async function updateTextDocumentWithNewLogEvents(
+    formattedLogEvents: string[],
+    textDocument: vscode.TextDocument,
+    maxLines: int
+) {
     const edit = new vscode.WorkspaceEdit()
     formattedLogEvents.forEach((formattedLogEvent) =>
         edit.insert(textDocument.uri, new vscode.Position(textDocument.lineCount, 0), formattedLogEvent)
     )
     if (textDocument.lineCount + formattedLogEvents.length > maxLines) {
-        trimOldestLines(formattedLogEvents.length, textDocument, edit)
+        trimOldestLines(formattedLogEvents.length, textDocument, edit, maxLines)
     }
     await vscode.workspace.applyEdit(edit)
 }
 
 //TODO: Trimming lines seems to jitter the screen. Can we keep the lines the customer has in view, fixed in place?
 //Scroll up num lines deleted?
-function trimOldestLines(numNewLines: number, textDocument: vscode.TextDocument, edit: vscode.WorkspaceEdit) {
+function trimOldestLines(
+    numNewLines: number,
+    textDocument: vscode.TextDocument,
+    edit: vscode.WorkspaceEdit,
+    maxLines: int
+) {
     const numLinesToTrim = textDocument.lineCount + numNewLines - maxLines
     const startPosition = new vscode.Position(0, 0)
     const endPosition = new vscode.Position(numLinesToTrim, 0)
