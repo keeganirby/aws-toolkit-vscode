@@ -22,6 +22,9 @@ import {
     StartLiveTailCommandOutput,
 } from '@aws-sdk/client-cloudwatch-logs'
 import { int } from 'aws-sdk/clients/datapipeline'
+import { CloudWatchLogs } from 'aws-sdk'
+import { pageableToCollection } from '../../../shared/utilities/collectionUtils'
+import { stat } from 'fs'
 
 const localize = nls.loadMessageBundle()
 
@@ -65,6 +68,8 @@ export async function tailLogGroup(logData?: { regionName: string; groupName: st
 
     const command = new StartLiveTailCommand({
         logGroupIdentifiers: [logGroupName],
+        logStreamNamePrefixes: [logStreamPrefix],
+        logEventFilterPattern: filterPattern,
     })
 
     try {
@@ -101,7 +106,10 @@ export class TailLogGroupWizard extends Wizard<TailLogGroupWizardResponse> {
             if (!state.regionLogGroupSubmenuResponse?.data) {
                 throw Error('LogGroupName is null')
             }
-            return createLogStreamPrompter(state.regionLogGroupSubmenuResponse.data)
+            return createLogStreamPrompter(
+                state.regionLogGroupSubmenuResponse.data,
+                state.regionLogGroupSubmenuResponse.region
+            )
         })
         this.form.filterPattern.bindPrompter((state) => createFilterPatternPrompter())
         this.form.maxLines.bindPrompter((state) => createMaxLinesPrompter())
@@ -144,13 +152,25 @@ function formatLogGroupArn(logGroupArn: string): string {
     return logGroupArn.endsWith(':*') ? logGroupArn.substring(0, logGroupArn.length - 2) : logGroupArn
 }
 
-export function createLogStreamPrompter(logGroup: string) {
-    const logStreamNames = ['a-log-stream', 'ab-log-stream', 'c-log-stream']
-    const logStreamQuickPickItems = logStreamNames.map<DataQuickPickItem<string>>((logStreamsString) => ({
-        label: logStreamsString,
-        data: logStreamsString,
-    }))
-
+export function createLogStreamPrompter(logGroup: string, region: string) {
+    // const logStreamNames = ['a-log-stream', 'ab-log-stream', 'c-log-stream']
+    // const logStreamQuickPickItems = logStreamNames.map<DataQuickPickItem<string>>((logStreamsString) => ({
+    //     label: logStreamsString,
+    //     data: logStreamsString,
+    // }))
+    const client = new DefaultCloudWatchLogsClient(region)
+    const request: CloudWatchLogs.DescribeLogStreamsRequest = {
+        logGroupIdentifier: logGroup,
+        orderBy: 'LastEventTime',
+        descending: true,
+    }
+    const requester = (request: CloudWatchLogs.DescribeLogStreamsRequest) => client.describeLogStreams(request)
+    const collection = pageableToCollection(requester, request, 'nextToken', 'logStreams')
+    const streamToItem = (logStream: CloudWatchLogs.LogStream) => ({
+        label: logStream.logStreamName,
+        data: logStream.logStreamName,
+    })
+    const items = collection.flatten().map(streamToItem)
     const defaultItem: DataQuickPickItem<string>[] = [
         {
             label: 'Tail all Log Streams (default)',
@@ -164,8 +184,7 @@ export function createLogStreamPrompter(logGroup: string) {
         },
     ]
 
-    const quickPickItems: DataQuickPickItem<string>[] = defaultItem.concat(logStreamQuickPickItems)
-    return createQuickPick(quickPickItems, {
+    const qp = createQuickPick(defaultItem, {
         title: `(Optional) Provide Log Stream prefix for '${truncate(logGroup, 25)}'`,
         placeholder: '(Optional) Select a specific Log Stream or provide Log Stream prefix',
         buttons: [createBackButton(), createExitButton()],
@@ -174,6 +193,8 @@ export function createLogStreamPrompter(logGroup: string) {
             transform: (resp) => resp,
         },
     })
+    qp.loadItems(items)
+    return qp
 }
 
 export function createFilterPatternPrompter() {
