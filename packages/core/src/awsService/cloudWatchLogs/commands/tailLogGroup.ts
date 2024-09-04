@@ -12,7 +12,6 @@ import { formatDateTimestamp, truncate } from '../../../shared'
 import { createInputBox } from '../../../shared/ui/inputPrompter'
 import { RegionSubmenu, RegionSubmenuResponse } from '../../../shared/ui/common/regionSubmenu'
 import { DefaultCloudWatchLogsClient } from '../../../shared/clients/cloudWatchLogsClient'
-import { CloudWatchLogs } from 'aws-sdk'
 import { createBackButton, createExitButton, createHelpButton } from '../../../shared/ui/buttons'
 import { createURIFromArgs } from '../cloudWatchLogsUtils'
 import { CancellationError } from '../../../shared/utilities/timeoutUtils'
@@ -22,9 +21,9 @@ import {
     StartLiveTailCommand,
     StartLiveTailCommandOutput,
 } from '@aws-sdk/client-cloudwatch-logs'
-import { log } from 'console'
 
 const localize = nls.loadMessageBundle()
+const maxLines = 100
 
 export async function tailLogGroup(logData?: { regionName: string; groupName: string }): Promise<void> {
     const wizard = new TailLogGroupWizard(logData)
@@ -52,17 +51,22 @@ export async function tailLogGroup(logData?: { regionName: string; groupName: st
         {}
     )
     const textDocument = await prepareDocument(uri)
-    console.log(regionName)
+    const textEditor = getEditorFromTextDocument(textDocument)
+
+    //TODO: Can't tell if this is working.
+    // If editor closes, the getEditorFromTextDocument during scroll throws.
+    vscode.window.onDidChangeVisibleTextEditors(async (events) => {
+        events.forEach((event) => console.log(`callback: ${event === textEditor}`))
+    })
+
     const cwClient = new CloudWatchLogsClient({ region: regionName })
+
     const command = new StartLiveTailCommand({
         logGroupIdentifiers: [logGroupName],
     })
-    console.log('SLT Request: ')
-    console.log(command)
+
     try {
         const resp = await cwClient.send(command)
-        console.log('SLT Response')
-        console.log(resp)
         displayTailingSessionDialogueWindow(logGroupName, logStreamPrefix, filterPattern, cwClient)
         await handleLiveTailResponse(resp, textDocument)
     } catch (err) {
@@ -197,8 +201,7 @@ function displayTailingSessionDialogueWindow(
     return vscode.window.showInformationMessage(message, stopTailing).then((item) => {
         try {
             if (item && item === stopTailing) {
-                console.log('Stop tailing button pressed')
-                cwClient.destroy()
+                stopLiveTailSession(cwClient)
             } else {
                 console.log('Window dismissed')
             }
@@ -225,16 +228,18 @@ async function handleLiveTailResponse(response: StartLiveTailCommandOutput, text
             if (event.sessionStart !== undefined) {
                 console.log(event.sessionStart)
             } else if (event.sessionUpdate !== undefined) {
-                const edit = new vscode.WorkspaceEdit()
-                for (const logEvent of event.sessionUpdate.sessionResults!) {
-                    await addLiveTailLogEventToTextDocument(logEvent, edit, textDocument)
-                }
-                await vscode.workspace.applyEdit(edit)
+                const formattedLogEvents = event.sessionUpdate.sessionResults!.map<string>((logEvent) =>
+                    formatLogEvent(logEvent)
+                )
+                //Determine should scroll before adding new lines to doc because large amount of
+                //new lines can push bottom of file out of view before scrolling.
                 const shouldScroll = shouldScrollTextDocument(textDocument)
+                await updateTextDocumentWithNewLogEvents(formattedLogEvents, textDocument)
                 console.log(`Should scroll: ${shouldScroll}`)
                 if (shouldScroll) {
                     scrollTextDocument(textDocument)
                 }
+                reportSizeOfTextDocument(textDocument)
             } else {
                 console.error('Unknown event type')
             }
@@ -245,19 +250,33 @@ async function handleLiveTailResponse(response: StartLiveTailCommandOutput, text
     }
 }
 
-async function addLiveTailLogEventToTextDocument(
-    logEvent: LiveTailSessionLogEvent,
-    edit: vscode.WorkspaceEdit,
-    textDocument: vscode.TextDocument
-) {
-    edit.insert(textDocument.uri, new vscode.Position(textDocument.lineCount, 0), `${formatLogEvent(logEvent)}`)
+async function updateTextDocumentWithNewLogEvents(formattedLogEvents: string[], textDocument: vscode.TextDocument) {
+    const edit = new vscode.WorkspaceEdit()
+    formattedLogEvents.forEach((formattedLogEvent) =>
+        edit.insert(textDocument.uri, new vscode.Position(textDocument.lineCount, 0), formattedLogEvent)
+    )
+    if (textDocument.lineCount + formattedLogEvents.length > maxLines) {
+        trimOldestLines(formattedLogEvents.length, textDocument, edit)
+    }
+    await vscode.workspace.applyEdit(edit)
+}
+
+//TODO: Trimming lines seems to jitter the screen. Can we keep the lines the customer has in view, fixed in place?
+//Scroll up num lines deleted?
+function trimOldestLines(numNewLines: number, textDocument: vscode.TextDocument, edit: vscode.WorkspaceEdit) {
+    const numLinesToTrim = textDocument.lineCount + numNewLines - maxLines
+    const startPosition = new vscode.Position(0, 0)
+    const endPosition = new vscode.Position(numLinesToTrim, 0)
+
+    const range = new vscode.Range(startPosition, endPosition)
+    edit.delete(textDocument.uri, range)
+    edit
 }
 
 function formatLogEvent(logEvent: LiveTailSessionLogEvent): string {
     if (!logEvent.timestamp || !logEvent.message) {
         return ''
     }
-
     const timestamp = formatDateTimestamp(true, new Date(logEvent.timestamp))
     let line = timestamp.concat('\t', logEvent.message)
     if (!line.endsWith('\n')) {
@@ -291,4 +310,13 @@ function getEditorFromTextDocument(textDocument: vscode.TextDocument): vscode.Te
         throw Error('No editor for textDocument found')
     }
     return editor
+}
+
+function stopLiveTailSession(cwClient: CloudWatchLogsClient) {
+    console.log('Stoping live tail session...')
+    cwClient.destroy()
+}
+
+function reportSizeOfTextDocument(textDocument: vscode.TextDocument) {
+    // const fs = vscode.workspace.fs.stat(textDocument.uri).then((stats) => console.log(`Size of file: ${stats.size}`))
 }
