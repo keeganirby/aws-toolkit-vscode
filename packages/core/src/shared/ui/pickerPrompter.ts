@@ -39,7 +39,7 @@ interface FilterBoxInputSettings<T> {
 export type ExtendedQuickPickOptions<T> = Omit<
     vscode.QuickPickOptions,
     // TODO: remove 'canPickMany' from Omit and implement/test functionality with multiple QuickPick items.
-    'placeHolder' | 'onDidSelectItem'
+    'canPickMany' | 'placeHolder' | 'onDidSelectItem'
 > & {
     title?: string
     value?: string

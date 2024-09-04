@@ -167,7 +167,6 @@ export function createLogStreamPrompter(logGroup: string) {
     const quickPickItems: DataQuickPickItem<string>[] = defaultItem.concat(logStreamQuickPickItems)
     return createQuickPick(quickPickItems, {
         title: `(Optional) Provide Log Stream prefix for '${truncate(logGroup, 25)}'`,
-        canPickMany: true,
         placeholder: '(Optional) Select a specific Log Stream or provide Log Stream prefix',
         buttons: [createBackButton(), createExitButton()],
         filterBoxInputSettings: {
@@ -335,7 +334,7 @@ function scrollTextDocument(textDocument: vscode.TextDocument) {
     const topPosition = new vscode.Position(Math.max(editor.document.lineCount - 2, 0), 0)
     const bottomPosition = new vscode.Position(Math.max(editor.document.lineCount - 2, 0), 0)
 
-    editor.revealRange(new vscode.Range(topPosition, bottomPosition), vscode.TextEditorRevealType.InCenter)
+    editor.revealRange(new vscode.Range(topPosition, bottomPosition), vscode.TextEditorRevealType.Default)
 }
 
 function getEditorFromTextDocument(textDocument: vscode.TextDocument): vscode.TextEditor {
