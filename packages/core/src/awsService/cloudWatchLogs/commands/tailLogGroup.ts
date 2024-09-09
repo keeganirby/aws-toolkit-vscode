@@ -7,8 +7,8 @@ import * as vscode from 'vscode'
 import * as nls from 'vscode-nls'
 import { Wizard } from '../../../shared/wizards/wizard'
 import { CloudWatchLogsGroupInfo } from '../registry/logDataRegistry'
-import { createQuickPick, DataQuickPickItem } from '../../../shared/ui/pickerPrompter'
-import { formatDateTimestamp, truncate } from '../../../shared'
+import { DataQuickPickItem } from '../../../shared/ui/pickerPrompter'
+import { formatDateTimestamp, Settings } from '../../../shared'
 import { createInputBox } from '../../../shared/ui/inputPrompter'
 import { RegionSubmenu, RegionSubmenuResponse } from '../../../shared/ui/common/regionSubmenu'
 import { DefaultCloudWatchLogsClient } from '../../../shared/clients/cloudWatchLogsClient'
@@ -22,11 +22,10 @@ import {
     StartLiveTailCommandOutput,
 } from '@aws-sdk/client-cloudwatch-logs'
 import { int } from 'aws-sdk/clients/datapipeline'
-import { CloudWatchLogs } from 'aws-sdk'
-import { pageableToCollection } from '../../../shared/utilities/collectionUtils'
-import { stat } from 'fs'
+import { LogStreamFilterResponse, LogStreamFilterSubmenu, LogStreamFilterType } from '../liveTailLogStreamSubmenu'
 
 const localize = nls.loadMessageBundle()
+const abortController = new AbortController()
 
 export async function tailLogGroup(logData?: { regionName: string; groupName: string }): Promise<void> {
     const wizard = new TailLogGroupWizard(logData)
@@ -37,14 +36,14 @@ export async function tailLogGroup(logData?: { regionName: string; groupName: st
 
     const logGroupName = response.regionLogGroupSubmenuResponse.data
     const regionName = response.regionLogGroupSubmenuResponse.region
-    const logStreamPrefix = response.logStreamPrefix
+    const logStreamFilter = response.logStreamFilter
     const filterPattern = response.filterPattern
     const maxLines = Number(response.maxLines)
 
     console.log('Printing prompter responses...')
     console.log('Selected LogGroup: ' + logGroupName)
     console.log('Selected Region: ' + regionName)
-    console.log('Selected LogStream Prefix: ' + logStreamPrefix)
+    console.log(`LogStream Filter: ${logStreamFilter.type} ${logStreamFilter.filter}`)
     console.log('Selected FilterPattern: ' + filterPattern)
     console.log('Max lines ' + maxLines)
 
@@ -56,25 +55,34 @@ export async function tailLogGroup(logData?: { regionName: string; groupName: st
         {}
     )
     const textDocument = await prepareDocument(uri)
-    const textEditor = getEditorFromTextDocument(textDocument)
 
-    //TODO: Can't tell if this is working.
-    // If editor closes, the getEditorFromTextDocument during scroll throws.
+    //TODO: Implement handler to close session when Editor closes
     vscode.window.onDidChangeVisibleTextEditors(async (events) => {
-        events.forEach((event) => console.log(`callback: ${event === textEditor}`))
+        console.log('events')
+        console.log(events)
+        console.log('visible test editors')
+        console.log(vscode.window.visibleTextEditors)
+        console.log('text documents')
+        console.log(vscode.workspace.textDocuments)
+
+        //Editor can close, but TextDocument stays open.
+        //Just changing active text editor triggers this callback
+        //
+        // events.forEach((event) => console.log(`callback: ${event === textEditor}`))
+    })
+
+    vscode.workspace.onDidCloseTextDocument((e) => {
+        console.log(e)
     })
 
     const cwClient = new CloudWatchLogsClient({ region: regionName })
 
-    const command = new StartLiveTailCommand({
-        logGroupIdentifiers: [logGroupName],
-        logStreamNamePrefixes: [logStreamPrefix],
-        logEventFilterPattern: filterPattern,
-    })
-
+    const command = buildStartLiveTailCommand(logGroupName, logStreamFilter, filterPattern)
     try {
-        const resp = await cwClient.send(command)
-        displayTailingSessionDialogueWindow(logGroupName, logStreamPrefix, filterPattern, cwClient)
+        const resp = await cwClient.send(command, {
+            abortSignal: abortController.signal,
+        })
+        displayTailingSessionDialogueWindow(logGroupName, logStreamFilter, filterPattern, cwClient)
         await handleLiveTailResponse(resp, textDocument, maxLines)
     } catch (err) {
         console.log(err)
@@ -83,7 +91,7 @@ export async function tailLogGroup(logData?: { regionName: string; groupName: st
 
 export interface TailLogGroupWizardResponse {
     regionLogGroupSubmenuResponse: RegionSubmenuResponse<string>
-    logStreamPrefix: string
+    logStreamFilter: LogStreamFilterResponse
     filterPattern: string
     maxLines: string
 }
@@ -102,11 +110,11 @@ export class TailLogGroupWizard extends Wizard<TailLogGroupWizardResponse> {
         })
         // this.form.logGroup.bindPrompter((state) => createLogGroupSubmenu())
         this.form.regionLogGroupSubmenuResponse.bindPrompter(createRegionLogGroupSubmenu)
-        this.form.logStreamPrefix.bindPrompter((state) => {
+        this.form.logStreamFilter.bindPrompter((state) => {
             if (!state.regionLogGroupSubmenuResponse?.data) {
                 throw Error('LogGroupName is null')
             }
-            return createLogStreamPrompter(
+            return new LogStreamFilterSubmenu(
                 state.regionLogGroupSubmenuResponse.data,
                 state.regionLogGroupSubmenuResponse.region
             )
@@ -152,51 +160,6 @@ function formatLogGroupArn(logGroupArn: string): string {
     return logGroupArn.endsWith(':*') ? logGroupArn.substring(0, logGroupArn.length - 2) : logGroupArn
 }
 
-export function createLogStreamPrompter(logGroup: string, region: string) {
-    // const logStreamNames = ['a-log-stream', 'ab-log-stream', 'c-log-stream']
-    // const logStreamQuickPickItems = logStreamNames.map<DataQuickPickItem<string>>((logStreamsString) => ({
-    //     label: logStreamsString,
-    //     data: logStreamsString,
-    // }))
-    const client = new DefaultCloudWatchLogsClient(region)
-    const request: CloudWatchLogs.DescribeLogStreamsRequest = {
-        logGroupIdentifier: logGroup,
-        orderBy: 'LastEventTime',
-        descending: true,
-    }
-    const requester = (request: CloudWatchLogs.DescribeLogStreamsRequest) => client.describeLogStreams(request)
-    const collection = pageableToCollection(requester, request, 'nextToken', 'logStreams')
-    const streamToItem = (logStream: CloudWatchLogs.LogStream) => ({
-        label: logStream.logStreamName,
-        data: logStream.logStreamName,
-    })
-    const items = collection.flatten().map(streamToItem)
-    const defaultItem: DataQuickPickItem<string>[] = [
-        {
-            label: 'Tail all Log Streams (default)',
-            data: '*',
-            description: 'Tail events from all Log Streams in the selected Log Group',
-        },
-        {
-            label: 'Log Streams',
-            kind: vscode.QuickPickItemKind.Separator,
-            data: undefined,
-        },
-    ]
-
-    const qp = createQuickPick(defaultItem, {
-        title: `(Optional) Provide Log Stream prefix for '${truncate(logGroup, 25)}'`,
-        placeholder: '(Optional) Select a specific Log Stream or provide Log Stream prefix',
-        buttons: [createBackButton(), createExitButton()],
-        filterBoxInputSettings: {
-            label: 'Select LogStream prefix',
-            transform: (resp) => resp,
-        },
-    })
-    qp.loadItems(items)
-    return qp
-}
-
 export function createFilterPatternPrompter() {
     const helpUri = 'https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/FilterAndPatternSyntax.html'
     return createInputBox({
@@ -225,14 +188,16 @@ function validateMaxLinesInput(input: string) {
 
 function displayTailingSessionDialogueWindow(
     logGroup: string,
-    logStreamPrefix: string,
+    logStreamPrefix: LogStreamFilterResponse,
     filter: string,
     cwClient: CloudWatchLogsClient
 ) {
     let message = `Tailing Log Group: '${logGroup}.'`
 
-    if (logStreamPrefix && logStreamPrefix !== '*') {
-        message += ` LogStream prefix: '${logStreamPrefix}.'`
+    if (logStreamPrefix && logStreamPrefix.type === LogStreamFilterType.SPECIFIC) {
+        message += `LogStream: '${logStreamPrefix.filter}.'`
+    } else if (logStreamPrefix && logStreamPrefix.type === LogStreamFilterType.PREFIX) {
+        message += `LogStream prefx: '${logStreamPrefix.filter}.'`
     }
 
     if (filter) {
@@ -284,14 +249,12 @@ async function handleLiveTailResponse(
                 if (shouldScroll) {
                     scrollTextDocument(textDocument)
                 }
-                reportSizeOfTextDocument(textDocument)
             } else {
                 console.error('Unknown event type')
             }
         }
     } catch (err) {
-        // On-stream exceptions are captured here
-        console.error(err)
+        console.warn('Caught on-stream exception: ' + err)
     }
 }
 
@@ -340,7 +303,10 @@ function formatLogEvent(logEvent: LiveTailSessionLogEvent): string {
 }
 
 function shouldScrollTextDocument(textDocument: vscode.TextDocument): boolean {
-    const editor = getEditorFromTextDocument(textDocument)
+    const editor = vscode.window.visibleTextEditors.find((editor) => editor.document === textDocument)
+    if (!editor) {
+        return false
+    }
     const lineCount = textDocument.lineCount
     const listLinePos = new vscode.Position(lineCount - 1, 0)
     const visibleRange = editor?.visibleRanges[0]
@@ -352,25 +318,45 @@ function shouldScrollTextDocument(textDocument: vscode.TextDocument): boolean {
 
 function scrollTextDocument(textDocument: vscode.TextDocument) {
     const editor = getEditorFromTextDocument(textDocument)
+    if (!editor) {
+        return
+    }
     const topPosition = new vscode.Position(Math.max(editor.document.lineCount - 2, 0), 0)
     const bottomPosition = new vscode.Position(Math.max(editor.document.lineCount - 2, 0), 0)
 
     editor.revealRange(new vscode.Range(topPosition, bottomPosition), vscode.TextEditorRevealType.Default)
 }
 
-function getEditorFromTextDocument(textDocument: vscode.TextDocument): vscode.TextEditor {
-    const editor = vscode.window.visibleTextEditors.find((editor) => editor.document === textDocument)
-    if (!editor) {
-        throw Error('No editor for textDocument found')
-    }
-    return editor
+function getEditorFromTextDocument(textDocument: vscode.TextDocument): vscode.TextEditor | undefined {
+    return vscode.window.visibleTextEditors.find((editor) => editor.document === textDocument)
 }
 
 function stopLiveTailSession(cwClient: CloudWatchLogsClient) {
     console.log('Stoping live tail session...')
+    abortController.abort()
     cwClient.destroy()
 }
 
-function reportSizeOfTextDocument(textDocument: vscode.TextDocument) {
-    // const fs = vscode.workspace.fs.stat(textDocument.uri).then((stats) => console.log(`Size of file: ${stats.size}`))
+function buildStartLiveTailCommand(
+    logGroup: string,
+    logStreamFilter: LogStreamFilterResponse,
+    filter: string
+): StartLiveTailCommand {
+    let logStreamNamePrefix = undefined
+    let logStreamName = undefined
+
+    if (logStreamFilter.type === LogStreamFilterType.PREFIX) {
+        logStreamNamePrefix = logStreamFilter.filter
+        logStreamName = undefined
+    } else if (logStreamFilter.type === LogStreamFilterType.SPECIFIC) {
+        logStreamName = logStreamFilter.filter
+        logStreamNamePrefix = undefined
+    }
+
+    return new StartLiveTailCommand({
+        logGroupIdentifiers: [logGroup],
+        logStreamNamePrefixes: logStreamNamePrefix ? [logStreamNamePrefix] : undefined,
+        logStreamNames: logStreamName ? [logStreamName] : undefined,
+        logEventFilterPattern: filter ? filter : undefined,
+    })
 }
