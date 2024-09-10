@@ -41,21 +41,6 @@ export async function tailLogGroup(logData?: { regionName: string; groupName: st
     const filterPattern = response.filterPattern
     const maxLines = settings.get('liveTailMaxEvents', 10000)
 
-    const startTime = Date.now()
-    const statusBarTimer = createLiveTailSessionTimerStatusBar()
-    globals.clock.setInterval(() => {
-        const elapsedTime = Date.now() - startTime
-        statusBarTimer.text = `${Math.floor(elapsedTime / 1000)}`
-        statusBarTimer.show()
-    }, 500)
-
-    console.log('Printing prompter responses...')
-    console.log('Selected LogGroup: ' + logGroupName)
-    console.log('Selected Region: ' + regionName)
-    console.log(`LogStream Filter: ${logStreamFilter.type} ${logStreamFilter.filter}`)
-    console.log('Selected FilterPattern: ' + filterPattern)
-    console.log('Max lines ' + maxLines)
-
     const uri = createURIFromArgs(
         {
             groupName: logGroupName,
@@ -64,19 +49,12 @@ export async function tailLogGroup(logData?: { regionName: string; groupName: st
         {}
     )
     const textDocument = await prepareDocument(uri)
-
     const cwClient = new CloudWatchLogsClient({ region: regionName })
 
-    const command = buildStartLiveTailCommand(logGroupName, logStreamFilter, filterPattern)
-    try {
-        const resp = await cwClient.send(command, {
-            abortSignal: abortController.signal,
-        })
-        displayTailingSessionDialogueWindow(logGroupName, logStreamFilter, filterPattern, cwClient)
-        await handleLiveTailResponse(resp, textDocument, maxLines)
-    } catch (err) {
-        console.log(err)
-    }
+    registerDocumentCloseCallback(cwClient, uri)
+    registerTimerStatusBarItem()
+
+    startLiveTail(logGroupName, logStreamFilter, filterPattern, maxLines, cwClient, textDocument)
 }
 
 export interface TailLogGroupWizardResponse {
@@ -178,8 +156,6 @@ function displayTailingSessionDialogueWindow(
         try {
             if (item && item === stopTailing) {
                 stopLiveTailSession(cwClient)
-            } else {
-                console.log('Window dismissed')
             }
         } catch (e) {
             console.log('[EXCEPTION]', e)
@@ -208,6 +184,7 @@ async function handleLiveTailResponse(
             if (event.sessionStart !== undefined) {
                 console.log(event.sessionStart)
             } else if (event.sessionUpdate !== undefined) {
+                console.log('Got new log events.')
                 const formattedLogEvents = event.sessionUpdate.sessionResults!.map<string>((logEvent) =>
                     formatLogEvent(logEvent)
                 )
@@ -215,7 +192,6 @@ async function handleLiveTailResponse(
                 //new lines can push bottom of file out of view before scrolling.
                 const shouldScroll = shouldScrollTextDocument(textDocument)
                 await updateTextDocumentWithNewLogEvents(formattedLogEvents, textDocument, maxLines)
-                console.log(`Should scroll: ${shouldScroll}`)
                 if (shouldScroll) {
                     scrollTextDocument(textDocument)
                 }
@@ -336,4 +312,48 @@ function createLiveTailSessionTimerStatusBar(): vscode.StatusBarItem {
     myStatusBarItem.text = '00:00:00'
     myStatusBarItem.show
     return myStatusBarItem
+}
+
+function registerDocumentCloseCallback(cwClient: CloudWatchLogsClient, uri: vscode.Uri) {
+    vscode.window.tabGroups.onDidChangeTabs((tabEvent) => {
+        if (tabEvent.closed.length > 0) {
+            tabEvent.closed.forEach((tab) => {
+                if (tab.input instanceof vscode.TabInputText) {
+                    if (tab.input.uri.path === uri.path) {
+                        stopLiveTailSession(cwClient)
+                    }
+                }
+            })
+        }
+    })
+}
+
+function registerTimerStatusBarItem() {
+    const startTime = Date.now()
+    const statusBarTimer = createLiveTailSessionTimerStatusBar()
+    globals.clock.setInterval(() => {
+        const elapsedTime = Date.now() - startTime
+        statusBarTimer.text = `${Math.floor(elapsedTime / 1000)}`
+        statusBarTimer.show()
+    }, 500)
+}
+
+async function startLiveTail(
+    logGroupName: string,
+    logStreamFilter: LogStreamFilterResponse,
+    filterPattern: string,
+    maxLines: number,
+    cwlClient: CloudWatchLogsClient,
+    textDocument: vscode.TextDocument
+) {
+    const command = buildStartLiveTailCommand(logGroupName, logStreamFilter, filterPattern)
+    try {
+        const resp = await cwlClient.send(command, {
+            abortSignal: abortController.signal,
+        })
+        displayTailingSessionDialogueWindow(logGroupName, logStreamFilter, filterPattern, cwlClient)
+        await handleLiveTailResponse(resp, textDocument, maxLines)
+    } catch (err) {
+        console.log(err)
+    }
 }
