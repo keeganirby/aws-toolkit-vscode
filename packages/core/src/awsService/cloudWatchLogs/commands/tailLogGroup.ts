@@ -8,7 +8,7 @@ import * as nls from 'vscode-nls'
 import { Wizard } from '../../../shared/wizards/wizard'
 import { CloudWatchLogsGroupInfo } from '../registry/logDataRegistry'
 import { DataQuickPickItem } from '../../../shared/ui/pickerPrompter'
-import { formatDateTimestamp } from '../../../shared'
+import { formatDateTimestamp, globals } from '../../../shared'
 import { createInputBox } from '../../../shared/ui/inputPrompter'
 import { RegionSubmenu, RegionSubmenuResponse } from '../../../shared/ui/common/regionSubmenu'
 import { DefaultCloudWatchLogsClient } from '../../../shared/clients/cloudWatchLogsClient'
@@ -41,6 +41,14 @@ export async function tailLogGroup(logData?: { regionName: string; groupName: st
     const filterPattern = response.filterPattern
     const maxLines = settings.get('liveTailMaxEvents', 10000)
 
+    const startTime = Date.now()
+    const statusBarTimer = createLiveTailSessionTimerStatusBar()
+    globals.clock.setInterval(() => {
+        const elapsedTime = Date.now() - startTime
+        statusBarTimer.text = `${Math.floor(elapsedTime / 1000)}`
+        statusBarTimer.show()
+    }, 500)
+
     console.log('Printing prompter responses...')
     console.log('Selected LogGroup: ' + logGroupName)
     console.log('Selected Region: ' + regionName)
@@ -56,25 +64,6 @@ export async function tailLogGroup(logData?: { regionName: string; groupName: st
         {}
     )
     const textDocument = await prepareDocument(uri)
-
-    //TODO: Implement handler to close session when Editor closes
-    vscode.window.onDidChangeVisibleTextEditors(async (events) => {
-        console.log('events')
-        console.log(events)
-        console.log('visible test editors')
-        console.log(vscode.window.visibleTextEditors)
-        console.log('text documents')
-        console.log(vscode.workspace.textDocuments)
-
-        //Editor can close, but TextDocument stays open.
-        //Just changing active text editor triggers this callback
-        //
-        // events.forEach((event) => console.log(`callback: ${event === textEditor}`))
-    })
-
-    vscode.workspace.onDidCloseTextDocument((e) => {
-        console.log(e)
-    })
 
     const cwClient = new CloudWatchLogsClient({ region: regionName })
 
@@ -340,4 +329,11 @@ function buildStartLiveTailCommand(
         logStreamNames: logStreamName ? [logStreamName] : undefined,
         logEventFilterPattern: filter ? filter : undefined,
     })
+}
+
+function createLiveTailSessionTimerStatusBar(): vscode.StatusBarItem {
+    const myStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100)
+    myStatusBarItem.text = '00:00:00'
+    myStatusBarItem.show
+    return myStatusBarItem
 }
