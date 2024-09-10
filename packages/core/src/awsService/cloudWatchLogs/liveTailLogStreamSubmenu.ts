@@ -25,7 +25,7 @@ export interface LogStreamFilterResponse {
 }
 
 export class LogStreamFilterSubmenu extends Prompter<LogStreamFilterResponse> {
-    private logStreamPrefixRegEx = new RegExp('[^:*]*')
+    private logStreamPrefixRegEx = /^[^:*]*$/
     private currentState: LogStreamFilterType = LogStreamFilterType.MENU
     private steps?: [current: number, total: number]
     private region: string
@@ -81,7 +81,7 @@ export class LogStreamFilterSubmenu extends Prompter<LogStreamFilterResponse> {
         }
 
         if (!this.logStreamPrefixRegEx.test(input)) {
-            return `LogStream prefix must match pattern: ${this.logStreamPrefixRegEx.source}`
+            return "LogStream prefix must match pattern: '[^:*]*'"
         }
     }
 
