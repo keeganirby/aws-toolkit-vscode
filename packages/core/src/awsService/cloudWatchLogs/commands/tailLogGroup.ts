@@ -13,7 +13,7 @@ import { createInputBox } from '../../../shared/ui/inputPrompter'
 import { RegionSubmenu, RegionSubmenuResponse } from '../../../shared/ui/common/regionSubmenu'
 import { DefaultCloudWatchLogsClient } from '../../../shared/clients/cloudWatchLogsClient'
 import { createBackButton, createExitButton, createHelpButton } from '../../../shared/ui/buttons'
-import { createURIFromArgs } from '../cloudWatchLogsUtils'
+import { CloudWatchLogsSettings, createURIFromArgs } from '../cloudWatchLogsUtils'
 import { CancellationError } from '../../../shared/utilities/timeoutUtils'
 import {
     CloudWatchLogsClient,
@@ -26,6 +26,7 @@ import { LogStreamFilterResponse, LogStreamFilterSubmenu, LogStreamFilterType } 
 
 const localize = nls.loadMessageBundle()
 const abortController = new AbortController()
+const settings = new CloudWatchLogsSettings()
 
 export async function tailLogGroup(logData?: { regionName: string; groupName: string }): Promise<void> {
     const wizard = new TailLogGroupWizard(logData)
@@ -38,7 +39,7 @@ export async function tailLogGroup(logData?: { regionName: string; groupName: st
     const regionName = response.regionLogGroupSubmenuResponse.region
     const logStreamFilter = response.logStreamFilter
     const filterPattern = response.filterPattern
-    const maxLines = Number(response.maxLines)
+    const maxLines = settings.get('liveTailMaxEvents', 10000)
 
     console.log('Printing prompter responses...')
     console.log('Selected LogGroup: ' + logGroupName)
@@ -93,7 +94,6 @@ export interface TailLogGroupWizardResponse {
     regionLogGroupSubmenuResponse: RegionSubmenuResponse<string>
     logStreamFilter: LogStreamFilterResponse
     filterPattern: string
-    maxLines: string
 }
 
 export class TailLogGroupWizard extends Wizard<TailLogGroupWizardResponse> {
@@ -119,7 +119,6 @@ export class TailLogGroupWizard extends Wizard<TailLogGroupWizardResponse> {
             )
         })
         this.form.filterPattern.bindPrompter((state) => createFilterPatternPrompter())
-        this.form.maxLines.bindPrompter((state) => createMaxLinesPrompter())
     }
 }
 
@@ -166,23 +165,6 @@ export function createFilterPatternPrompter() {
         placeholder: 'filter pattern (case sensitive; empty matches all)',
         buttons: [createHelpButton(helpUri), createBackButton(), createExitButton()],
     })
-}
-
-function createMaxLinesPrompter() {
-    return createInputBox({
-        title: 'Provide maximum number of lines',
-        prompt: 'Enter an integer value between 1,000 and 15,000',
-        value: '1000',
-        validateInput: validateMaxLinesInput,
-    })
-}
-
-function validateMaxLinesInput(input: string) {
-    const maxLines = Number(input)
-    if (isNaN(Number(input)) || !Number.isSafeInteger(maxLines) || maxLines < 1000 || maxLines > 15000) {
-        return 'Input must be a positive integer value between 1,000 and 15,000'
-    }
-    return undefined
 }
 
 function displayTailingSessionDialogueWindow(
