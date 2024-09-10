@@ -10,6 +10,7 @@ import { createQuickPick, DataQuickPickItem, QuickPickPrompter } from '../../sha
 import { pageableToCollection } from '../../shared/utilities/collectionUtils'
 import { CloudWatchLogs } from 'aws-sdk'
 import { isValidResponse, StepEstimator } from '../../shared/wizards/wizard'
+import { isNonNullable } from '../../shared/utilities/tsUtils'
 
 export enum LogStreamFilterType {
     MENU = 'menu',
@@ -49,18 +50,17 @@ export class LogStreamFilterSubmenu extends Prompter<LogStreamFilterResponse> {
         const options: DataQuickPickItem<LogStreamFilterType>[] = []
         options.push({
             label: 'None',
-            description: 'Tail log events from all LogStreams in the selected LogGroup',
+            detail: 'Tail log events from all LogStreams in the selected LogGroup',
             data: LogStreamFilterType.ALL,
         })
         options.push({
             label: 'Specific',
-            description: 'Select a specific LogStream to tail log events from',
+            detail: 'Tail log events from only a specific LogStream',
             data: LogStreamFilterType.SPECIFIC,
         })
         options.push({
             label: 'Prefix',
-            description:
-                'Provide a custom prefix. Only log events in LogStreams that start with the prefix will be included',
+            detail: 'Tail log events from all LogStreams that begin with a supplied prefix',
             data: LogStreamFilterType.PREFIX,
         })
         return options
@@ -94,17 +94,13 @@ export class LogStreamFilterSubmenu extends Prompter<LogStreamFilterResponse> {
         }
         const requester = (request: CloudWatchLogs.DescribeLogStreamsRequest) => client.describeLogStreams(request)
         const collection = pageableToCollection(requester, request, 'nextToken', 'logStreams')
-        const isValidLogStream = (obj?: CloudWatchLogs.LogStream): obj is CloudWatchLogs.LogStream => {
-            return !!obj && typeof obj.logStreamName === 'string'
-        }
-        const streamToItem = (logStream: CloudWatchLogs.LogStream): DataQuickPickItem<string> => ({
-            label: logStream.logStreamName!,
-            data: logStream.logStreamName!,
-        })
-        const items = collection.flatten().filter(isValidLogStream).map(streamToItem)
+
+        const items = collection
+            .filter(isNonNullable)
+            .map((streams) => streams!.map((stream) => ({ data: stream.logStreamName!, label: stream.logStreamName! })))
 
         return createQuickPick(items, {
-            title: 'Select LogStream to tail',
+            title: 'Select LogStream',
             buttons: createCommonButtons(),
         })
     }
@@ -127,7 +123,10 @@ export class LogStreamFilterSubmenu extends Prompter<LogStreamFilterResponse> {
                         this.switchState(LogStreamFilterType.SPECIFIC)
                     } else if (resp === LogStreamFilterType.ALL) {
                         return { filter: undefined, type: resp }
+                    } else {
+                        return undefined
                     }
+
                     break
                 }
                 case LogStreamFilterType.PREFIX: {

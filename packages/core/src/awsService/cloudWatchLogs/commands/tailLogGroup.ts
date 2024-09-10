@@ -8,7 +8,7 @@ import * as nls from 'vscode-nls'
 import { Wizard } from '../../../shared/wizards/wizard'
 import { CloudWatchLogsGroupInfo } from '../registry/logDataRegistry'
 import { DataQuickPickItem } from '../../../shared/ui/pickerPrompter'
-import { formatDateTimestamp, Settings } from '../../../shared'
+import { formatDateTimestamp } from '../../../shared'
 import { createInputBox } from '../../../shared/ui/inputPrompter'
 import { RegionSubmenu, RegionSubmenuResponse } from '../../../shared/ui/common/regionSubmenu'
 import { DefaultCloudWatchLogsClient } from '../../../shared/clients/cloudWatchLogsClient'
@@ -108,7 +108,6 @@ export class TailLogGroupWizard extends Wizard<TailLogGroupWizardResponse> {
                     : undefined,
             },
         })
-        // this.form.logGroup.bindPrompter((state) => createLogGroupSubmenu())
         this.form.regionLogGroupSubmenuResponse.bindPrompter(createRegionLogGroupSubmenu)
         this.form.logStreamFilter.bindPrompter((state) => {
             if (!state.regionLogGroupSubmenuResponse?.data) {
