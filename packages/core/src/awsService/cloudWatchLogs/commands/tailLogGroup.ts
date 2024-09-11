@@ -25,10 +25,10 @@ import { int } from 'aws-sdk/clients/datapipeline'
 import { LogStreamFilterResponse, LogStreamFilterSubmenu, LogStreamFilterType } from '../liveTailLogStreamSubmenu'
 
 const localize = nls.loadMessageBundle()
-const abortController = new AbortController()
 const settings = new CloudWatchLogsSettings()
 
 export async function tailLogGroup(logData?: { regionName: string; groupName: string }): Promise<void> {
+    const abortController = new AbortController()
     const wizard = new TailLogGroupWizard(logData)
     const response = await wizard.run()
     if (!response) {
@@ -51,10 +51,10 @@ export async function tailLogGroup(logData?: { regionName: string; groupName: st
     const textDocument = await prepareDocument(uri)
     const cwClient = new CloudWatchLogsClient({ region: regionName })
 
-    registerDocumentCloseCallback(cwClient, uri)
+    registerDocumentCloseCallback(cwClient, uri, abortController)
     registerTimerStatusBarItem()
 
-    startLiveTail(logGroupName, logStreamFilter, filterPattern, maxLines, cwClient, textDocument)
+    startLiveTail(logGroupName, logStreamFilter, filterPattern, maxLines, cwClient, textDocument, abortController)
 }
 
 export interface TailLogGroupWizardResponse {
@@ -128,7 +128,7 @@ function formatLogGroupArn(logGroupArn: string): string {
 export function createFilterPatternPrompter() {
     const helpUri = 'https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/FilterAndPatternSyntax.html'
     return createInputBox({
-        title: 'Provide Log filter pattern',
+        title: 'Provide log event filter pattern',
         placeholder: 'filter pattern (case sensitive; empty matches all)',
         buttons: [createHelpButton(helpUri), createBackButton(), createExitButton()],
     })
@@ -138,7 +138,8 @@ function displayTailingSessionDialogueWindow(
     logGroup: string,
     logStreamPrefix: LogStreamFilterResponse,
     filter: string,
-    cwClient: CloudWatchLogsClient
+    cwClient: CloudWatchLogsClient,
+    abortController: AbortController
 ) {
     let message = `Tailing Log Group: '${logGroup}.'`
 
@@ -155,7 +156,7 @@ function displayTailingSessionDialogueWindow(
     return vscode.window.showInformationMessage(message, stopTailing).then((item) => {
         try {
             if (item && item === stopTailing) {
-                stopLiveTailSession(cwClient)
+                stopLiveTailSession(cwClient, abortController)
             }
         } catch (e) {
             console.log('[EXCEPTION]', e)
@@ -277,7 +278,7 @@ function getEditorFromTextDocument(textDocument: vscode.TextDocument): vscode.Te
     return vscode.window.visibleTextEditors.find((editor) => editor.document === textDocument)
 }
 
-function stopLiveTailSession(cwClient: CloudWatchLogsClient) {
+function stopLiveTailSession(cwClient: CloudWatchLogsClient, abortController: AbortController) {
     console.log('Stoping live tail session...')
     abortController.abort()
     cwClient.destroy()
@@ -314,13 +315,18 @@ function createLiveTailSessionTimerStatusBar(): vscode.StatusBarItem {
     return myStatusBarItem
 }
 
-function registerDocumentCloseCallback(cwClient: CloudWatchLogsClient, uri: vscode.Uri) {
+//TODO: This appears to stop the tailing session correctly when the tab closes, but does not dispose of the underlying TextDocument. I think Log data (and the doucment) remains in memory.
+function registerDocumentCloseCallback(
+    cwClient: CloudWatchLogsClient,
+    uri: vscode.Uri,
+    abortController: AbortController
+) {
     vscode.window.tabGroups.onDidChangeTabs((tabEvent) => {
         if (tabEvent.closed.length > 0) {
             tabEvent.closed.forEach((tab) => {
                 if (tab.input instanceof vscode.TabInputText) {
                     if (tab.input.uri.path === uri.path) {
-                        stopLiveTailSession(cwClient)
+                        stopLiveTailSession(cwClient, abortController)
                     }
                 }
             })
@@ -344,14 +350,15 @@ async function startLiveTail(
     filterPattern: string,
     maxLines: number,
     cwlClient: CloudWatchLogsClient,
-    textDocument: vscode.TextDocument
+    textDocument: vscode.TextDocument,
+    abortController: AbortController
 ) {
     const command = buildStartLiveTailCommand(logGroupName, logStreamFilter, filterPattern)
     try {
         const resp = await cwlClient.send(command, {
             abortSignal: abortController.signal,
         })
-        displayTailingSessionDialogueWindow(logGroupName, logStreamFilter, filterPattern, cwlClient)
+        displayTailingSessionDialogueWindow(logGroupName, logStreamFilter, filterPattern, cwlClient, abortController)
         await handleLiveTailResponse(resp, textDocument, maxLines)
     } catch (err) {
         console.log(err)

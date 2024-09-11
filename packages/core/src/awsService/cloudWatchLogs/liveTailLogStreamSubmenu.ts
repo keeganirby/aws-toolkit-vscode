@@ -50,17 +50,17 @@ export class LogStreamFilterSubmenu extends Prompter<LogStreamFilterResponse> {
         const options: DataQuickPickItem<LogStreamFilterType>[] = []
         options.push({
             label: 'None',
-            detail: 'Tail log events from all LogStreams in the selected LogGroup',
+            detail: 'Include log events from all LogStreams in the selected LogGroup',
             data: LogStreamFilterType.ALL,
         })
         options.push({
             label: 'Specific',
-            detail: 'Tail log events from only a specific LogStream',
+            detail: 'Include log events from only a specific LogStream',
             data: LogStreamFilterType.SPECIFIC,
         })
         options.push({
             label: 'Prefix',
-            detail: 'Tail log events from all LogStreams that begin with a supplied prefix',
+            detail: 'Include log events from LogStreams that begin with a provided prefix',
             data: LogStreamFilterType.PREFIX,
         })
         return options
@@ -68,7 +68,7 @@ export class LogStreamFilterSubmenu extends Prompter<LogStreamFilterResponse> {
 
     public createLogStreamPrefixBox(): InputBoxPrompter {
         return createInputBox({
-            title: 'Enter custom LogStream prefix',
+            title: 'Enter LogStream prefix',
             placeholder: 'LogStream prefix',
             validateInput: (input) => this.validateLogStreamPrefix(input),
             buttons: createCommonButtons(),
