@@ -29,19 +29,20 @@ export class LogStreamFilterSubmenu extends Prompter<LogStreamFilterResponse> {
     private currentState: LogStreamFilterType = LogStreamFilterType.MENU
     private steps?: [current: number, total: number]
     private region: string
-    private logGroup: string
+    private logGroupArn: string
     public defaultPrompter: QuickPickPrompter<LogStreamFilterType> = this.createMenuPrompter()
 
-    public constructor(logGroup: string, region: string) {
+    public constructor(logGroupArn: string, region: string) {
         super()
         this.region = region
-        this.logGroup = logGroup
+        this.logGroupArn = logGroupArn
     }
 
     public createMenuPrompter() {
+        const helpUri = 'https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_StartLiveTail.html'
         const prompter = createQuickPick(this.menuOptions, {
             title: 'Select LogStream filter type',
-            buttons: createCommonButtons(),
+            buttons: createCommonButtons(helpUri),
         })
         return prompter
     }
@@ -49,7 +50,7 @@ export class LogStreamFilterSubmenu extends Prompter<LogStreamFilterResponse> {
     private get menuOptions(): DataQuickPickItem<LogStreamFilterType>[] {
         const options: DataQuickPickItem<LogStreamFilterType>[] = []
         options.push({
-            label: 'None',
+            label: 'All',
             detail: 'Include log events from all LogStreams in the selected LogGroup',
             data: LogStreamFilterType.ALL,
         })
@@ -67,28 +68,33 @@ export class LogStreamFilterSubmenu extends Prompter<LogStreamFilterResponse> {
     }
 
     public createLogStreamPrefixBox(): InputBoxPrompter {
+        const helpUri =
+            'https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_StartLiveTail.html#CWL-StartLiveTail-request-logStreamNamePrefixes'
         return createInputBox({
             title: 'Enter LogStream prefix',
             placeholder: 'LogStream prefix',
+            prompt: 'Only log events in the LogStreams that have names that start with the prefix that you specify here are included in the Live Tail session',
             validateInput: (input) => this.validateLogStreamPrefix(input),
-            buttons: createCommonButtons(),
+            buttons: createCommonButtons(helpUri),
         })
     }
 
-    public validateLogStreamPrefix(input: string) {
-        if (input.length > 512) {
+    public validateLogStreamPrefix(prefix: string) {
+        if (prefix.length > 512) {
             return 'LogStream prefix cannot be longer than 512 characters'
         }
 
-        if (!this.logStreamPrefixRegEx.test(input)) {
-            return "LogStream prefix must match pattern: '[^:*]*'"
+        if (!this.logStreamPrefixRegEx.test(prefix)) {
+            return 'LogStream prefix must match pattern: [^:*]*'
         }
     }
 
     public createLogStreamSelector(): QuickPickPrompter<string> {
+        const helpUri =
+            'https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_StartLiveTail.html#CWL-StartLiveTail-request-logStreamNames'
         const client = new DefaultCloudWatchLogsClient(this.region)
         const request: CloudWatchLogs.DescribeLogStreamsRequest = {
-            logGroupIdentifier: this.logGroup,
+            logGroupIdentifier: this.logGroupArn,
             orderBy: 'LastEventTime',
             descending: true,
         }
@@ -101,7 +107,7 @@ export class LogStreamFilterSubmenu extends Prompter<LogStreamFilterResponse> {
 
         return createQuickPick(items, {
             title: 'Select LogStream',
-            buttons: createCommonButtons(),
+            buttons: createCommonButtons(helpUri),
         })
     }
 
