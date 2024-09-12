@@ -30,6 +30,7 @@ export class LogStreamFilterSubmenu extends Prompter<LogStreamFilterResponse> {
     private steps?: [current: number, total: number]
     private region: string
     private logGroupArn: string
+    private logStreamPrefixes: string[] = []
     public defaultPrompter: QuickPickPrompter<LogStreamFilterType> = this.createMenuPrompter()
 
     public constructor(logGroupArn: string, region: string) {
@@ -67,13 +68,18 @@ export class LogStreamFilterSubmenu extends Prompter<LogStreamFilterResponse> {
         return options
     }
 
-    public createLogStreamPrefixBox(): InputBoxPrompter {
+    public createLogStreamPrefixBox(prefixes: string[]): InputBoxPrompter {
         const helpUri =
             'https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_StartLiveTail.html#CWL-StartLiveTail-request-logStreamNamePrefixes'
+
+        let prefixString = 'Provided prefixes:\n'
+        prefixes.forEach((prefix) => (prefixString += prefix + '\n'))
         return createInputBox({
             title: 'Enter LogStream prefix',
             placeholder: 'LogStream prefix',
-            prompt: 'Only log events in the LogStreams that have names that start with the prefix that you specify here are included in the Live Tail session',
+            prompt:
+                'Only log events in the LogStreams that have names that start with the prefix that you specify here are included in the Live Tail session. Up to 5 prefixes may be provided.\n' +
+                prefixString,
             validateInput: (input) => this.validateLogStreamPrefix(input),
             buttons: createCommonButtons(helpUri),
         })
@@ -136,11 +142,17 @@ export class LogStreamFilterSubmenu extends Prompter<LogStreamFilterResponse> {
                     break
                 }
                 case LogStreamFilterType.PREFIX: {
-                    const resp = await this.createLogStreamPrefixBox().prompt()
+                    const resp = await this.createLogStreamPrefixBox(this.logStreamPrefixes).prompt()
                     if (isValidResponse(resp)) {
-                        return { filter: resp, type: LogStreamFilterType.PREFIX }
+                        // return { filter: resp, type: LogStreamFilterType.PREFIX }
+                        this.logStreamPrefixes.push(resp)
+                        this.logStreamPrefixes.forEach(console.log)
+                        if (this.logStreamPrefixes.length === 5) {
+                            this.switchState(LogStreamFilterType.MENU)
+                            return { filter: resp, type: LogStreamFilterType.PREFIX }
+                        }
                     }
-                    this.switchState(LogStreamFilterType.MENU)
+
                     break
                 }
                 case LogStreamFilterType.SPECIFIC: {
