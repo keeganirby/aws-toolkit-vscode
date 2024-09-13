@@ -72,7 +72,7 @@ export class LogStreamFilterSubmenu extends Prompter<LogStreamFilterResponse> {
             'https://docs.aws.amazon.com/AmazonCloudWatchLogs/latest/APIReference/API_StartLiveTail.html#CWL-StartLiveTail-request-logStreamNamePrefixes'
         return createInputBox({
             title: 'Enter LogStream prefix',
-            placeholder: 'LogStream prefix',
+            placeholder: 'logStream prefix (case sensitive; empty matches all)',
             prompt: 'Only log events in the LogStreams that have names that start with the prefix that you specify here are included in the Live Tail session',
             validateInput: (input) => this.validateLogStreamPrefix(input),
             buttons: createCommonButtons(helpUri),

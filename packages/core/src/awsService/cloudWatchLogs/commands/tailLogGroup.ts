@@ -130,6 +130,7 @@ export function createFilterPatternPrompter() {
     return createInputBox({
         title: 'Provide log event filter pattern',
         placeholder: 'filter pattern (case sensitive; empty matches all)',
+        prompt: 'Optional pattern to use to filter the results to include only log events that match the pattern.',
         buttons: [createHelpButton(helpUri), createBackButton(), createExitButton()],
     })
 }
@@ -309,7 +310,7 @@ function buildStartLiveTailCommand(
 }
 
 function createLiveTailSessionTimerStatusBar(): vscode.StatusBarItem {
-    const myStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100)
+    const myStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 0)
     myStatusBarItem.text = '00:00:00'
     myStatusBarItem.show
     return myStatusBarItem
@@ -339,7 +340,7 @@ function registerTimerStatusBarItem() {
     const statusBarTimer = createLiveTailSessionTimerStatusBar()
     globals.clock.setInterval(() => {
         const elapsedTime = Date.now() - startTime
-        statusBarTimer.text = `${Math.floor(elapsedTime / 1000)}`
+        statusBarTimer.text = `Tailing Session Timer: ${Math.floor(elapsedTime / 1000)} secs.`
         statusBarTimer.show()
     }, 500)
 }
