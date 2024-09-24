@@ -8,7 +8,7 @@ import * as nls from 'vscode-nls'
 import { Wizard } from '../../../shared/wizards/wizard'
 import { CloudWatchLogsGroupInfo } from '../registry/logDataRegistry'
 import { DataQuickPickItem } from '../../../shared/ui/pickerPrompter'
-import { formatDateTimestamp, globals } from '../../../shared'
+import { convertToTimeString, formatDateTimestamp, globals } from '../../../shared'
 import { createInputBox } from '../../../shared/ui/inputPrompter'
 import { RegionSubmenu, RegionSubmenuResponse } from '../../../shared/ui/common/regionSubmenu'
 import { DefaultCloudWatchLogsClient } from '../../../shared/clients/cloudWatchLogsClient'
@@ -51,10 +51,38 @@ export async function tailLogGroup(logData?: { regionName: string; groupName: st
     const textDocument = await prepareDocument(uri)
     const cwClient = new CloudWatchLogsClient({ region: regionName })
 
-    registerDocumentCloseCallback(cwClient, uri, abortController)
-    registerTimerStatusBarItem()
+    const isSampledStatusBarItem = createIsSampledStatusBar()
+    const eventRateStatusBarItem = createEventRateStatusBar()
+    const sessionTimerStatusBarItem = createSessionTimerStatusBar()
+    const timer = startTimer(sessionTimerStatusBarItem)
 
-    startLiveTail(logGroupName, logStreamFilter, filterPattern, maxLines, cwClient, textDocument, abortController)
+    registerDocumentCloseCallback(cwClient, uri, abortController, timer)
+
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+        console.log(editor)
+        if (editor?.document == textDocument) {
+            isSampledStatusBarItem.show()
+            eventRateStatusBarItem.show()
+            sessionTimerStatusBarItem.show()
+        } else {
+            isSampledStatusBarItem.hide()
+            eventRateStatusBarItem.hide()
+            sessionTimerStatusBarItem.hide()
+        }
+    })
+
+    startLiveTail(
+        logGroupName,
+        logStreamFilter,
+        filterPattern,
+        maxLines,
+        cwClient,
+        textDocument,
+        abortController,
+        isSampledStatusBarItem,
+        eventRateStatusBarItem,
+        timer
+    )
 }
 
 export interface TailLogGroupWizardResponse {
@@ -140,7 +168,8 @@ function displayTailingSessionDialogueWindow(
     logStreamPrefix: LogStreamFilterResponse,
     filter: string,
     cwClient: CloudWatchLogsClient,
-    abortController: AbortController
+    abortController: AbortController,
+    timer: NodeJS.Timer
 ) {
     let message = `Tailing Log Group: '${logGroup}.'`
 
@@ -157,7 +186,7 @@ function displayTailingSessionDialogueWindow(
     return vscode.window.showInformationMessage(message, stopTailing).then((item) => {
         try {
             if (item && item === stopTailing) {
-                stopLiveTailSession(cwClient, abortController)
+                stopLiveTailSession(cwClient, abortController, timer)
             }
         } catch (e) {
             console.log('[EXCEPTION]', e)
@@ -175,7 +204,9 @@ async function prepareDocument(uri: vscode.Uri): Promise<vscode.TextDocument> {
 async function handleLiveTailResponse(
     response: StartLiveTailCommandOutput,
     textDocument: vscode.TextDocument,
-    maxLines: int
+    maxLines: int,
+    isSampledStatusBarItem: vscode.StatusBarItem,
+    eventRateStatusBarItem: vscode.StatusBarItem
 ) {
     if (!response.responseStream) {
         throw Error('response is undefined')
@@ -194,6 +225,8 @@ async function handleLiveTailResponse(
                 //new lines can push bottom of file out of view before scrolling.
                 const shouldScroll = shouldScrollTextDocument(textDocument)
                 await updateTextDocumentWithNewLogEvents(formattedLogEvents, textDocument, maxLines)
+                updateIsSampledStatusBar(event.sessionUpdate.sessionMetadata?.sampled!, isSampledStatusBarItem)
+                updateEventRateStatusBar(event.sessionUpdate.sessionResults?.length!, eventRateStatusBarItem)
                 if (shouldScroll) {
                     scrollTextDocument(textDocument)
                 }
@@ -279,10 +312,11 @@ function getEditorFromTextDocument(textDocument: vscode.TextDocument): vscode.Te
     return vscode.window.visibleTextEditors.find((editor) => editor.document === textDocument)
 }
 
-function stopLiveTailSession(cwClient: CloudWatchLogsClient, abortController: AbortController) {
+function stopLiveTailSession(cwClient: CloudWatchLogsClient, abortController: AbortController, timer: NodeJS.Timer) {
     console.log('Stoping live tail session...')
     abortController.abort()
     cwClient.destroy()
+    stopTimer(timer)
 }
 
 function buildStartLiveTailCommand(
@@ -309,25 +343,49 @@ function buildStartLiveTailCommand(
     })
 }
 
-function createLiveTailSessionTimerStatusBar(): vscode.StatusBarItem {
-    const myStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 0)
-    myStatusBarItem.text = '00:00:00'
-    myStatusBarItem.show
-    return myStatusBarItem
+function createSessionTimerStatusBar(): vscode.StatusBarItem {
+    const timerStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 0)
+    timerStatusBarItem.show()
+    return timerStatusBarItem
+}
+
+function createIsSampledStatusBar(): vscode.StatusBarItem {
+    const isSampledStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 0)
+    isSampledStatusBarItem.show()
+    return updateIsSampledStatusBar(false, isSampledStatusBarItem)
+}
+
+function updateIsSampledStatusBar(isSampled: boolean, isSampledStatusBarItem: vscode.StatusBarItem) {
+    const text = `Sampled: ${isSampled ? 'Yes' : 'No'}`
+    isSampledStatusBarItem.text = text
+    return isSampledStatusBarItem
+}
+
+function createEventRateStatusBar(): vscode.StatusBarItem {
+    const eventRateStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 0)
+    eventRateStatusBarItem.show()
+    return updateEventRateStatusBar(0, eventRateStatusBarItem)
+}
+
+function updateEventRateStatusBar(numEvents: int, eventRateStatusBarItem: vscode.StatusBarItem) {
+    const text = `${numEvents} events/sec.`
+    eventRateStatusBarItem.text = text
+    return eventRateStatusBarItem
 }
 
 //TODO: This appears to stop the tailing session correctly when the tab closes, but does not dispose of the underlying TextDocument. I think Log data (and the doucment) remains in memory.
 function registerDocumentCloseCallback(
     cwClient: CloudWatchLogsClient,
     uri: vscode.Uri,
-    abortController: AbortController
+    abortController: AbortController,
+    timer: NodeJS.Timer
 ) {
     vscode.window.tabGroups.onDidChangeTabs((tabEvent) => {
         if (tabEvent.closed.length > 0) {
             tabEvent.closed.forEach((tab) => {
                 if (tab.input instanceof vscode.TabInputText) {
                     if (tab.input.uri.path === uri.path) {
-                        stopLiveTailSession(cwClient, abortController)
+                        stopLiveTailSession(cwClient, abortController, timer)
                     }
                 }
             })
@@ -335,14 +393,17 @@ function registerDocumentCloseCallback(
     })
 }
 
-function registerTimerStatusBarItem() {
+function startTimer(sessionTimerStatusBarItem: vscode.StatusBarItem): NodeJS.Timer {
     const startTime = Date.now()
-    const statusBarTimer = createLiveTailSessionTimerStatusBar()
-    globals.clock.setInterval(() => {
+    return globals.clock.setInterval(() => {
         const elapsedTime = Date.now() - startTime
-        statusBarTimer.text = `Tailing Session Timer: ${Math.floor(elapsedTime / 1000)} secs.`
-        statusBarTimer.show()
+        const timeString = convertToTimeString(elapsedTime)
+        sessionTimerStatusBarItem.text = `LiveTail Session Timer: ${timeString}`
     }, 500)
+}
+
+function stopTimer(timer: NodeJS.Timer) {
+    globals.clock.clearInterval(timer)
 }
 
 async function startLiveTail(
@@ -352,15 +413,25 @@ async function startLiveTail(
     maxLines: number,
     cwlClient: CloudWatchLogsClient,
     textDocument: vscode.TextDocument,
-    abortController: AbortController
+    abortController: AbortController,
+    isSampledStatusBarItem: vscode.StatusBarItem,
+    eventRateStatusBarItem: vscode.StatusBarItem,
+    timer: NodeJS.Timer
 ) {
     const command = buildStartLiveTailCommand(logGroupName, logStreamFilter, filterPattern)
     try {
         const resp = await cwlClient.send(command, {
             abortSignal: abortController.signal,
         })
-        displayTailingSessionDialogueWindow(logGroupName, logStreamFilter, filterPattern, cwlClient, abortController)
-        await handleLiveTailResponse(resp, textDocument, maxLines)
+        displayTailingSessionDialogueWindow(
+            logGroupName,
+            logStreamFilter,
+            filterPattern,
+            cwlClient,
+            abortController,
+            timer
+        )
+        await handleLiveTailResponse(resp, textDocument, maxLines, isSampledStatusBarItem, eventRateStatusBarItem)
     } catch (err) {
         console.log(err)
     }

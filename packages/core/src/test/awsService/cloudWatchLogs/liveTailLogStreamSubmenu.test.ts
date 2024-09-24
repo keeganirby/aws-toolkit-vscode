@@ -1,8 +1,5 @@
 import assert from 'assert'
-import {
-    LogStreamFilterSubmenu,
-    LogStreamFilterType,
-} from '../../../awsService/cloudWatchLogs/liveTailLogStreamSubmenu'
+import { LogStreamFilterSubmenu } from '../../../awsService/cloudWatchLogs/liveTailLogStreamSubmenu'
 import { createQuickPickPrompterTester, QuickPickPrompterTester } from '../../shared/ui/testUtils'
 import { getTestWindow } from '../../shared/vscode/window'
 
