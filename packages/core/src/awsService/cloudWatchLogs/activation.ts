@@ -20,7 +20,12 @@ import { searchLogGroup } from './commands/searchLogGroup'
 import { changeLogSearchParams } from './changeLogSearch'
 import { CloudWatchLogsNode } from './explorer/cloudWatchLogsNode'
 import { loadAndOpenInitialLogStreamFile, LogStreamCodeLensProvider } from './document/logStreamsCodeLensProvider'
-import { scrollTextDocumentToBottom, scrollTextDocumentToTop, tailLogGroup } from './commands/tailLogGroup'
+import {
+    clearDocument,
+    scrollTextDocumentToBottom,
+    scrollTextDocumentToTop,
+    tailLogGroup,
+} from './commands/tailLogGroup'
 import { LiveTailSessionRegistry } from './registry/liveTailSessionRegistry'
 import { LiveTailCodeLensProvider } from './document/liveTailCodeLensProvider'
 
@@ -121,6 +126,10 @@ export async function activate(context: vscode.ExtensionContext, configuration: 
 
         Commands.register('aws.cwl.scrollToBottom', async (document: vscode.TextDocument) => {
             await scrollTextDocumentToBottom(document)
+        }),
+
+        Commands.register('aws.cwl.clearDocument', async (document: vscode.TextDocument) => {
+            await clearDocument(document)
         }),
 
         Commands.register('aws.cwl.changeFilterPattern', async () => changeLogSearchParams(registry, 'filterPattern')),

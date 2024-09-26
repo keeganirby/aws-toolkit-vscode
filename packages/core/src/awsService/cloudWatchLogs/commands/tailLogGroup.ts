@@ -262,7 +262,6 @@ function trimOldestLines(
 
     const range = new vscode.Range(startPosition, endPosition)
     edit.delete(textDocument.uri, range)
-    edit
 }
 
 function formatLogEvent(logEvent: LiveTailSessionLogEvent): string {
@@ -315,6 +314,14 @@ export async function scrollTextDocumentToTop(textDocument: vscode.TextDocument)
     const bottomPosition = new vscode.Position(0, 0)
 
     editor.revealRange(new vscode.Range(topPosition, bottomPosition), vscode.TextEditorRevealType.Default)
+}
+
+export async function clearDocument(textDocument: vscode.TextDocument) {
+    const edit = new vscode.WorkspaceEdit()
+    const startPosition = new vscode.Position(0, 0)
+    const endPosition = new vscode.Position(textDocument.lineCount, 0)
+    edit.delete(textDocument.uri, new vscode.Range(startPosition, endPosition))
+    await vscode.workspace.applyEdit(edit)
 }
 
 function getEditorFromTextDocument(textDocument: vscode.TextDocument): vscode.TextEditor | undefined {

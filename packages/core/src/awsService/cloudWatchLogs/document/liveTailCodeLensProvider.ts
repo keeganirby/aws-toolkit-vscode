@@ -17,6 +17,7 @@ export class LiveTailCodeLensProvider implements vscode.CodeLensProvider {
         const codeLenses: vscode.CodeLens[] = []
         codeLenses.push(this.buildScrollToTopCodeLens(document))
         codeLenses.push(this.buildScrollToBottomCodeLens(document))
+        codeLenses.push(this.buildClearDocumentCodeLens(document))
 
         return codeLenses
     }
@@ -39,6 +40,19 @@ export class LiveTailCodeLensProvider implements vscode.CodeLensProvider {
         const command: vscode.Command = {
             title: 'Scroll to bottom',
             command: 'aws.cwl.scrollToBottom',
+            arguments: [document],
+        }
+        return new vscode.CodeLens(range, command)
+    }
+
+    private buildClearDocumentCodeLens(document: vscode.TextDocument): vscode.CodeLens {
+        const range = new vscode.Range(
+            new vscode.Position(document.lineCount - 1, 0),
+            new vscode.Position(document.lineCount - 1, 0)
+        )
+        const command: vscode.Command = {
+            title: 'Clear document',
+            command: 'aws.cwl.clearDocument',
             arguments: [document],
         }
         return new vscode.CodeLens(range, command)
