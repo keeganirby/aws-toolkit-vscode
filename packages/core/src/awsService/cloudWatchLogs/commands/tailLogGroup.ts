@@ -53,10 +53,10 @@ export async function tailLogGroup(
     const timer = startTimer(statusBarItems.sessionTimer)
     hideShowStatusBarItemsOnActiveEditor(statusBarItems, textDocument)
 
-    registerDocumentCloseCallback(liveTailSession, timer)
+    registerDocumentCloseCallback(liveTailSession, timer, registry)
 
     const liveTailResponseStream = await liveTailSession.startLiveTailSession()
-    displayTailingSessionDialogueWindow(liveTailSession, timer)
+    displayTailingSessionDialogueWindow(liveTailSession, timer, registry)
 
     await handleLiveTailResponse(
         liveTailResponseStream,
@@ -162,13 +162,17 @@ export function createFilterPatternPrompter() {
     })
 }
 
-function displayTailingSessionDialogueWindow(session: LiveTailSession, timer: NodeJS.Timer) {
+function displayTailingSessionDialogueWindow(
+    session: LiveTailSession,
+    timer: NodeJS.Timer,
+    registry: LiveTailSessionRegistry
+) {
     let message = `Tailing Log Group: '${session.logGroupName}.'`
     const stopTailing = 'Stop Tailing'
     return vscode.window.showInformationMessage(message, stopTailing).then((item) => {
         try {
             if (item && item === stopTailing) {
-                closeSession(session, timer)
+                closeSession(session, timer, registry)
             }
         } catch (e) {
             console.log('[EXCEPTION]', e)
@@ -357,13 +361,17 @@ function updateEventRateStatusBar(numEvents: number, eventRateStatusBarItem: vsc
 }
 
 //TODO: This appears to stop the tailing session correctly when the tab closes, but does not dispose of the underlying TextDocument. I think Log data (and the doucment) remains in memory.
-function registerDocumentCloseCallback(liveTailSession: LiveTailSession, timer: NodeJS.Timer) {
+function registerDocumentCloseCallback(
+    liveTailSession: LiveTailSession,
+    timer: NodeJS.Timer,
+    registry: LiveTailSessionRegistry
+) {
     vscode.window.tabGroups.onDidChangeTabs((tabEvent) => {
         if (tabEvent.closed.length > 0) {
             tabEvent.closed.forEach((tab) => {
                 if (tab.input instanceof vscode.TabInputText) {
                     if (tab.input.uri.path === liveTailSession.uri.path) {
-                        closeSession(liveTailSession, timer)
+                        closeSession(liveTailSession, timer, registry)
                     }
                 }
             })
