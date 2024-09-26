@@ -4,7 +4,7 @@
  */
 
 import * as vscode from 'vscode'
-import { CLOUDWATCH_LOGS_SCHEME } from '../../shared/constants'
+import { CLOUDWATCH_LOGS_LT_SCHEME, CLOUDWATCH_LOGS_SCHEME } from '../../shared/constants'
 import { Settings } from '../../shared/settings'
 import { addLogEvents } from './commands/addLogEvents'
 import { copyLogResource } from './commands/copyLogResource'
@@ -12,6 +12,7 @@ import { saveCurrentLogDataContent } from './commands/saveCurrentLogDataContent'
 import { viewLogStream } from './commands/viewLogStream'
 import { LogDataCodeLensProvider } from './document/logDataCodeLensProvider'
 import { LogDataDocumentProvider } from './document/logDataDocumentProvider'
+import { LiveTailDocumentProvider } from './document/liveTailDocumentProvider'
 import { LogGroupNode } from './explorer/logGroupNode'
 import { LogDataRegistry } from './registry/logDataRegistry'
 import { Commands } from '../../shared/vscode/commands2'
@@ -19,12 +20,16 @@ import { searchLogGroup } from './commands/searchLogGroup'
 import { changeLogSearchParams } from './changeLogSearch'
 import { CloudWatchLogsNode } from './explorer/cloudWatchLogsNode'
 import { loadAndOpenInitialLogStreamFile, LogStreamCodeLensProvider } from './document/logStreamsCodeLensProvider'
-import { tailLogGroup } from './commands/tailLogGroup'
+import { scrollTextDocumentToBottom, scrollTextDocumentToTop, tailLogGroup } from './commands/tailLogGroup'
+import { LiveTailSessionRegistry } from './registry/liveTailSessionRegistry'
+import { LiveTailCodeLensProvider } from './document/liveTailCodeLensProvider'
 
 export async function activate(context: vscode.ExtensionContext, configuration: Settings): Promise<void> {
     const registry = LogDataRegistry.instance
+    const liveTailSessionRegistry = LiveTailSessionRegistry.instance
 
     const documentProvider = new LogDataDocumentProvider(registry)
+    const liveTailDocumentProvider = new LiveTailDocumentProvider()
 
     context.subscriptions.push(
         vscode.languages.registerCodeLensProvider(
@@ -37,17 +42,21 @@ export async function activate(context: vscode.ExtensionContext, configuration: 
     )
 
     context.subscriptions.push(
-        vscode.languages.registerCodeLensProvider(
-            {
-                language: 'log-tail',
-                scheme: CLOUDWATCH_LOGS_SCHEME,
-            },
-            new LogStreamCodeLensProvider(registry, documentProvider)
-        )
+        vscode.workspace.registerTextDocumentContentProvider(CLOUDWATCH_LOGS_SCHEME, documentProvider)
     )
 
     context.subscriptions.push(
-        vscode.workspace.registerTextDocumentContentProvider(CLOUDWATCH_LOGS_SCHEME, documentProvider)
+        vscode.workspace.registerTextDocumentContentProvider(CLOUDWATCH_LOGS_LT_SCHEME, liveTailDocumentProvider)
+    )
+
+    context.subscriptions.push(
+        vscode.languages.registerCodeLensProvider(
+            {
+                language: 'log',
+                scheme: CLOUDWATCH_LOGS_LT_SCHEME,
+            },
+            new LiveTailCodeLensProvider()
+        )
     )
 
     context.subscriptions.push(
@@ -103,7 +112,15 @@ export async function activate(context: vscode.ExtensionContext, configuration: 
                 node instanceof LogGroupNode
                     ? { regionName: node.regionCode, groupName: node.logGroup.logGroupName! }
                     : undefined
-            await tailLogGroup(logGroupInfo)
+            await tailLogGroup(liveTailSessionRegistry, logGroupInfo)
+        }),
+
+        Commands.register('aws.cwl.scrollToTop', async (document: vscode.TextDocument) => {
+            await scrollTextDocumentToTop(document)
+        }),
+
+        Commands.register('aws.cwl.scrollToBottom', async (document: vscode.TextDocument) => {
+            await scrollTextDocumentToBottom(document)
         }),
 
         Commands.register('aws.cwl.changeFilterPattern', async () => changeLogSearchParams(registry, 'filterPattern')),

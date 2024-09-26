@@ -8,81 +8,80 @@ import * as nls from 'vscode-nls'
 import { Wizard } from '../../../shared/wizards/wizard'
 import { CloudWatchLogsGroupInfo } from '../registry/logDataRegistry'
 import { DataQuickPickItem } from '../../../shared/ui/pickerPrompter'
-import { convertToTimeString, formatDateTimestamp, globals } from '../../../shared'
+import { convertToTimeString, globals } from '../../../shared'
 import { createInputBox } from '../../../shared/ui/inputPrompter'
 import { RegionSubmenu, RegionSubmenuResponse } from '../../../shared/ui/common/regionSubmenu'
 import { DefaultCloudWatchLogsClient } from '../../../shared/clients/cloudWatchLogsClient'
 import { createBackButton, createExitButton, createHelpButton } from '../../../shared/ui/buttons'
-import { CloudWatchLogsSettings, createURIFromArgs } from '../cloudWatchLogsUtils'
 import { CancellationError } from '../../../shared/utilities/timeoutUtils'
-import {
-    CloudWatchLogsClient,
-    LiveTailSessionLogEvent,
-    StartLiveTailCommand,
-    StartLiveTailCommandOutput,
-} from '@aws-sdk/client-cloudwatch-logs'
-import { int } from 'aws-sdk/clients/datapipeline'
-import { LogStreamFilterResponse, LogStreamFilterSubmenu, LogStreamFilterType } from '../liveTailLogStreamSubmenu'
+import { LiveTailSessionLogEvent, StartLiveTailCommandOutput } from '@aws-sdk/client-cloudwatch-logs'
+import { LogStreamFilterResponse, LogStreamFilterSubmenu } from '../liveTailLogStreamSubmenu'
+import { LiveTailSessionRegistry } from '../registry/liveTailSessionRegistry'
+import { LiveTailSession, LiveTailSessionConfiguration } from '../registry/liveTailSession'
 
 const localize = nls.loadMessageBundle()
-const settings = new CloudWatchLogsSettings()
 
-export async function tailLogGroup(logData?: { regionName: string; groupName: string }): Promise<void> {
-    const abortController = new AbortController()
+type LiveTailStatusBarItems = {
+    isSampled: vscode.StatusBarItem
+    eventRate: vscode.StatusBarItem
+    sessionTimer: vscode.StatusBarItem
+}
+
+export async function tailLogGroup(
+    registry: LiveTailSessionRegistry,
+    logData?: { regionName: string; groupName: string }
+): Promise<void> {
     const wizard = new TailLogGroupWizard(logData)
-    const response = await wizard.run()
-    if (!response) {
+    const wizardResponse = await wizard.run()
+    if (!wizardResponse) {
         throw new CancellationError('user')
     }
 
-    const logGroupName = response.regionLogGroupSubmenuResponse.data
-    const regionName = response.regionLogGroupSubmenuResponse.region
-    const logStreamFilter = response.logStreamFilter
-    const filterPattern = response.filterPattern
-    const maxLines = settings.get('liveTailMaxEvents', 10000)
+    const liveTailSessionConfig: LiveTailSessionConfiguration = {
+        logGroupName: wizardResponse.regionLogGroupSubmenuResponse.data,
+        logStreamFilter: wizardResponse.logStreamFilter,
+        logEventFilterPattern: wizardResponse.filterPattern,
+        region: wizardResponse.regionLogGroupSubmenuResponse.region,
+    }
 
-    const uri = createURIFromArgs(
-        {
-            groupName: logGroupName,
-            regionName: regionName,
-        },
-        {}
+    const liveTailSession = new LiveTailSession(liveTailSessionConfig)
+    registry.registerLiveTailSession(liveTailSession)
+
+    const textDocument = await prepareDocument(liveTailSession.uri)
+
+    const statusBarItems: LiveTailStatusBarItems = createStatusBarItems()
+    const timer = startTimer(statusBarItems.sessionTimer)
+    hideShowStatusBarItemsOnActiveEditor(statusBarItems, textDocument)
+
+    registerDocumentCloseCallback(liveTailSession, timer)
+
+    const liveTailResponseStream = await liveTailSession.startLiveTailSession()
+    displayTailingSessionDialogueWindow(liveTailSession, timer)
+
+    await handleLiveTailResponse(
+        liveTailResponseStream,
+        textDocument,
+        liveTailSession.maxLines,
+        statusBarItems.isSampled,
+        statusBarItems.eventRate
     )
-    const textDocument = await prepareDocument(uri)
-    const cwClient = new CloudWatchLogsClient({ region: regionName })
+}
 
-    const isSampledStatusBarItem = createIsSampledStatusBar()
-    const eventRateStatusBarItem = createEventRateStatusBar()
-    const sessionTimerStatusBarItem = createSessionTimerStatusBar()
-    const timer = startTimer(sessionTimerStatusBarItem)
-
-    registerDocumentCloseCallback(cwClient, uri, abortController, timer)
-
+function hideShowStatusBarItemsOnActiveEditor(
+    statusBarItems: LiveTailStatusBarItems,
+    textDocument: vscode.TextDocument
+) {
     vscode.window.onDidChangeActiveTextEditor((editor) => {
-        console.log(editor)
         if (editor?.document == textDocument) {
-            isSampledStatusBarItem.show()
-            eventRateStatusBarItem.show()
-            sessionTimerStatusBarItem.show()
+            statusBarItems.eventRate.show()
+            statusBarItems.isSampled.show()
+            statusBarItems.sessionTimer.show()
         } else {
-            isSampledStatusBarItem.hide()
-            eventRateStatusBarItem.hide()
-            sessionTimerStatusBarItem.hide()
+            statusBarItems.eventRate.hide()
+            statusBarItems.isSampled.hide()
+            statusBarItems.sessionTimer.hide()
         }
     })
-
-    startLiveTail(
-        logGroupName,
-        logStreamFilter,
-        filterPattern,
-        maxLines,
-        cwClient,
-        textDocument,
-        abortController,
-        isSampledStatusBarItem,
-        eventRateStatusBarItem,
-        timer
-    )
 }
 
 export interface TailLogGroupWizardResponse {
@@ -163,35 +162,24 @@ export function createFilterPatternPrompter() {
     })
 }
 
-function displayTailingSessionDialogueWindow(
-    logGroup: string,
-    logStreamPrefix: LogStreamFilterResponse,
-    filter: string,
-    cwClient: CloudWatchLogsClient,
-    abortController: AbortController,
-    timer: NodeJS.Timer
-) {
-    let message = `Tailing Log Group: '${logGroup}.'`
-
-    if (logStreamPrefix && logStreamPrefix.type === LogStreamFilterType.SPECIFIC) {
-        message += `LogStream: '${logStreamPrefix.filter}.'`
-    } else if (logStreamPrefix && logStreamPrefix.type === LogStreamFilterType.PREFIX) {
-        message += `LogStream prefx: '${logStreamPrefix.filter}.'`
-    }
-
-    if (filter) {
-        message += ` Filter pattern: '${filter}'`
-    }
+function displayTailingSessionDialogueWindow(session: LiveTailSession, timer: NodeJS.Timer) {
+    let message = `Tailing Log Group: '${session.logGroupName}.'`
     const stopTailing = 'Stop Tailing'
     return vscode.window.showInformationMessage(message, stopTailing).then((item) => {
         try {
             if (item && item === stopTailing) {
-                stopLiveTailSession(cwClient, abortController, timer)
+                closeSession(session, timer)
             }
         } catch (e) {
             console.log('[EXCEPTION]', e)
         }
     })
+}
+
+function closeSession(session: LiveTailSession, timer: NodeJS.Timer, registry: LiveTailSessionRegistry) {
+    session.stopLiveTailSession()
+    globals.clock.clearInterval(timer)
+    registry.removeLiveTailSessionFromRegistry(session.uri)
 }
 
 async function prepareDocument(uri: vscode.Uri): Promise<vscode.TextDocument> {
@@ -204,7 +192,7 @@ async function prepareDocument(uri: vscode.Uri): Promise<vscode.TextDocument> {
 async function handleLiveTailResponse(
     response: StartLiveTailCommandOutput,
     textDocument: vscode.TextDocument,
-    maxLines: int,
+    maxLines: number,
     isSampledStatusBarItem: vscode.StatusBarItem,
     eventRateStatusBarItem: vscode.StatusBarItem
 ) {
@@ -221,15 +209,18 @@ async function handleLiveTailResponse(
                 const formattedLogEvents = event.sessionUpdate.sessionResults!.map<string>((logEvent) =>
                     formatLogEvent(logEvent)
                 )
-                //Determine should scroll before adding new lines to doc because large amount of
-                //new lines can push bottom of file out of view before scrolling.
-                const shouldScroll = shouldScrollTextDocument(textDocument)
-                await updateTextDocumentWithNewLogEvents(formattedLogEvents, textDocument, maxLines)
+
+                if (formattedLogEvents.length !== 0) {
+                    //Determine should scroll before adding new lines to doc because large amount of
+                    //new lines can push bottom of file out of view before scrolling.
+                    const shouldScroll = shouldScrollTextDocument(textDocument)
+                    await updateTextDocumentWithNewLogEvents(formattedLogEvents, textDocument, maxLines)
+                    if (shouldScroll) {
+                        scrollTextDocumentToBottom(textDocument)
+                    }
+                }
                 updateIsSampledStatusBar(event.sessionUpdate.sessionMetadata?.sampled!, isSampledStatusBarItem)
                 updateEventRateStatusBar(event.sessionUpdate.sessionResults?.length!, eventRateStatusBarItem)
-                if (shouldScroll) {
-                    scrollTextDocument(textDocument)
-                }
             } else {
                 console.error('Unknown event type')
             }
@@ -242,7 +233,7 @@ async function handleLiveTailResponse(
 async function updateTextDocumentWithNewLogEvents(
     formattedLogEvents: string[],
     textDocument: vscode.TextDocument,
-    maxLines: int
+    maxLines: number
 ) {
     const edit = new vscode.WorkspaceEdit()
     formattedLogEvents.forEach((formattedLogEvent) =>
@@ -260,7 +251,7 @@ function trimOldestLines(
     numNewLines: number,
     textDocument: vscode.TextDocument,
     edit: vscode.WorkspaceEdit,
-    maxLines: int
+    maxLines: number
 ) {
     const numLinesToTrim = textDocument.lineCount + numNewLines - maxLines
     const startPosition = new vscode.Position(0, 0)
@@ -275,7 +266,11 @@ function formatLogEvent(logEvent: LiveTailSessionLogEvent): string {
     if (!logEvent.timestamp || !logEvent.message) {
         return ''
     }
-    const timestamp = formatDateTimestamp(true, new Date(logEvent.timestamp))
+    const timestamp = new Date(logEvent.timestamp).toLocaleTimeString('en', {
+        timeStyle: 'medium',
+        hour12: false,
+        timeZone: 'UTC',
+    })
     let line = timestamp.concat('\t', logEvent.message)
     if (!line.endsWith('\n')) {
         line = line.concat('\n')
@@ -289,15 +284,15 @@ function shouldScrollTextDocument(textDocument: vscode.TextDocument): boolean {
         return false
     }
     const lineCount = textDocument.lineCount
-    const listLinePos = new vscode.Position(lineCount - 1, 0)
+    const lastLinePos = new vscode.Position(lineCount - 1, 0)
     const visibleRange = editor?.visibleRanges[0]
-    if (visibleRange?.contains(listLinePos)) {
+    if (visibleRange?.contains(lastLinePos)) {
         return true
     }
     return false
 }
 
-function scrollTextDocument(textDocument: vscode.TextDocument) {
+export async function scrollTextDocumentToBottom(textDocument: vscode.TextDocument) {
     const editor = getEditorFromTextDocument(textDocument)
     if (!editor) {
         return
@@ -308,39 +303,27 @@ function scrollTextDocument(textDocument: vscode.TextDocument) {
     editor.revealRange(new vscode.Range(topPosition, bottomPosition), vscode.TextEditorRevealType.Default)
 }
 
+export async function scrollTextDocumentToTop(textDocument: vscode.TextDocument) {
+    const editor = getEditorFromTextDocument(textDocument)
+    if (!editor) {
+        return
+    }
+    const topPosition = new vscode.Position(0, 0)
+    const bottomPosition = new vscode.Position(0, 0)
+
+    editor.revealRange(new vscode.Range(topPosition, bottomPosition), vscode.TextEditorRevealType.Default)
+}
+
 function getEditorFromTextDocument(textDocument: vscode.TextDocument): vscode.TextEditor | undefined {
     return vscode.window.visibleTextEditors.find((editor) => editor.document === textDocument)
 }
 
-function stopLiveTailSession(cwClient: CloudWatchLogsClient, abortController: AbortController, timer: NodeJS.Timer) {
-    console.log('Stoping live tail session...')
-    abortController.abort()
-    cwClient.destroy()
-    stopTimer(timer)
-}
-
-function buildStartLiveTailCommand(
-    logGroup: string,
-    logStreamFilter: LogStreamFilterResponse,
-    filter: string
-): StartLiveTailCommand {
-    let logStreamNamePrefix = undefined
-    let logStreamName = undefined
-
-    if (logStreamFilter.type === LogStreamFilterType.PREFIX) {
-        logStreamNamePrefix = logStreamFilter.filter
-        logStreamName = undefined
-    } else if (logStreamFilter.type === LogStreamFilterType.SPECIFIC) {
-        logStreamName = logStreamFilter.filter
-        logStreamNamePrefix = undefined
+function createStatusBarItems(): LiveTailStatusBarItems {
+    return {
+        sessionTimer: createSessionTimerStatusBar(),
+        isSampled: createIsSampledStatusBar(),
+        eventRate: createEventRateStatusBar(),
     }
-
-    return new StartLiveTailCommand({
-        logGroupIdentifiers: [logGroup],
-        logStreamNamePrefixes: logStreamNamePrefix ? [logStreamNamePrefix] : undefined,
-        logStreamNames: logStreamName ? [logStreamName] : undefined,
-        logEventFilterPattern: filter ? filter : undefined,
-    })
 }
 
 function createSessionTimerStatusBar(): vscode.StatusBarItem {
@@ -367,25 +350,20 @@ function createEventRateStatusBar(): vscode.StatusBarItem {
     return updateEventRateStatusBar(0, eventRateStatusBarItem)
 }
 
-function updateEventRateStatusBar(numEvents: int, eventRateStatusBarItem: vscode.StatusBarItem) {
+function updateEventRateStatusBar(numEvents: number, eventRateStatusBarItem: vscode.StatusBarItem) {
     const text = `${numEvents} events/sec.`
     eventRateStatusBarItem.text = text
     return eventRateStatusBarItem
 }
 
 //TODO: This appears to stop the tailing session correctly when the tab closes, but does not dispose of the underlying TextDocument. I think Log data (and the doucment) remains in memory.
-function registerDocumentCloseCallback(
-    cwClient: CloudWatchLogsClient,
-    uri: vscode.Uri,
-    abortController: AbortController,
-    timer: NodeJS.Timer
-) {
+function registerDocumentCloseCallback(liveTailSession: LiveTailSession, timer: NodeJS.Timer) {
     vscode.window.tabGroups.onDidChangeTabs((tabEvent) => {
         if (tabEvent.closed.length > 0) {
             tabEvent.closed.forEach((tab) => {
                 if (tab.input instanceof vscode.TabInputText) {
-                    if (tab.input.uri.path === uri.path) {
-                        stopLiveTailSession(cwClient, abortController, timer)
+                    if (tab.input.uri.path === liveTailSession.uri.path) {
+                        closeSession(liveTailSession, timer)
                     }
                 }
             })
@@ -400,39 +378,4 @@ function startTimer(sessionTimerStatusBarItem: vscode.StatusBarItem): NodeJS.Tim
         const timeString = convertToTimeString(elapsedTime)
         sessionTimerStatusBarItem.text = `LiveTail Session Timer: ${timeString}`
     }, 500)
-}
-
-function stopTimer(timer: NodeJS.Timer) {
-    globals.clock.clearInterval(timer)
-}
-
-async function startLiveTail(
-    logGroupName: string,
-    logStreamFilter: LogStreamFilterResponse,
-    filterPattern: string,
-    maxLines: number,
-    cwlClient: CloudWatchLogsClient,
-    textDocument: vscode.TextDocument,
-    abortController: AbortController,
-    isSampledStatusBarItem: vscode.StatusBarItem,
-    eventRateStatusBarItem: vscode.StatusBarItem,
-    timer: NodeJS.Timer
-) {
-    const command = buildStartLiveTailCommand(logGroupName, logStreamFilter, filterPattern)
-    try {
-        const resp = await cwlClient.send(command, {
-            abortSignal: abortController.signal,
-        })
-        displayTailingSessionDialogueWindow(
-            logGroupName,
-            logStreamFilter,
-            filterPattern,
-            cwlClient,
-            abortController,
-            timer
-        )
-        await handleLiveTailResponse(resp, textDocument, maxLines, isSampledStatusBarItem, eventRateStatusBarItem)
-    } catch (err) {
-        console.log(err)
-    }
 }

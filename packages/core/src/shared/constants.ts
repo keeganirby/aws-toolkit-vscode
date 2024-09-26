@@ -111,6 +111,8 @@ export const ecsIamPermissionsUrl = vscode.Uri.parse(
  * URI scheme for CloudWatch Logs Virtual Documents
  */
 export const CLOUDWATCH_LOGS_SCHEME = 'aws-cwl' // eslint-disable-line @typescript-eslint/naming-convention
+export const CLOUDWATCH_LOGS_LT_SCHEME = 'aws-cwl-lt' // eslint-disable-line @typescript-eslint/naming-convention
+
 export const AWS_SCHEME = 'aws' // eslint-disable-line @typescript-eslint/naming-convention
 
 export const lambdaPackageTypeImage = 'Image'
