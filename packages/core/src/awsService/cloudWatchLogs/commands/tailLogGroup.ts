@@ -53,7 +53,7 @@ export async function tailLogGroup(
     const timer = startTimer(statusBarItems.sessionTimer)
     hideShowStatusBarItemsOnActiveEditor(statusBarItems, textDocument)
 
-    registerDocumentCloseCallback(liveTailSession, timer, registry)
+    registerTabChangeCallback(liveTailSession, timer, registry)
 
     const liveTailResponseStream = await liveTailSession.startLiveTailSession()
     displayTailingSessionDialogueWindow(liveTailSession, timer, registry)
@@ -359,16 +359,14 @@ function updateEventRateStatusBar(numEvents: number, eventRateStatusBarItem: vsc
     return eventRateStatusBarItem
 }
 
-function registerDocumentCloseCallback(
+function registerTabChangeCallback(
     liveTailSession: LiveTailSession,
     timer: NodeJS.Timer,
     registry: LiveTailSessionRegistry
 ) {
-    //onDidChangeTabs trigger
+    //onDidChangeTabs triggers when tabs are created, closed, or swapped focus
     vscode.window.tabGroups.onDidChangeTabs((tabEvent) => {
-        console.log('Trigged tabchange event')
         const isOpen = isLiveTailSessionOpenInAnyTab(liveTailSession)
-        console.log(`is LT Session open: ${isOpen}`)
         if (!isOpen) {
             closeSession(liveTailSession, timer, registry)
         }
@@ -380,9 +378,6 @@ function isLiveTailSessionOpenInAnyTab(liveTailSession: LiveTailSession) {
     vscode.window.tabGroups.all.forEach((tabGroup) => {
         tabGroup.tabs.forEach((tab) => {
             if (tab.input instanceof vscode.TabInputText) {
-                console.log(`Tab URI: ${tab.input.uri.toString()}`)
-                console.log(`LiveTailSession URI: ${liveTailSession.uri.toString()}`)
-                console.log(`isEqual: ${liveTailSession.uri.toString() === tab.input.uri.toString()}`)
                 if (liveTailSession.uri.toString() === tab.input.uri.toString()) {
                     isOpen = true
                 }
