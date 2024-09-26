@@ -162,22 +162,21 @@ export function createFilterPatternPrompter() {
     })
 }
 
-function displayTailingSessionDialogueWindow(
+async function displayTailingSessionDialogueWindow(
     session: LiveTailSession,
     timer: NodeJS.Timer,
     registry: LiveTailSessionRegistry
 ) {
     let message = `Tailing Log Group: '${session.logGroupName}.'`
     const stopTailing = 'Stop Tailing'
-    return vscode.window.showInformationMessage(message, stopTailing).then((item) => {
-        try {
-            if (item && item === stopTailing) {
-                closeSession(session, timer, registry)
-            }
-        } catch (e) {
-            console.log('[EXCEPTION]', e)
+    const item = await vscode.window.showInformationMessage(message, stopTailing)
+    try {
+        if (item && item === stopTailing) {
+            closeSession(session, timer, registry)
         }
-    })
+    } catch (e) {
+        console.log('[EXCEPTION]', e)
+    }
 }
 
 function closeSession(session: LiveTailSession, timer: NodeJS.Timer, registry: LiveTailSessionRegistry) {
@@ -360,23 +359,37 @@ function updateEventRateStatusBar(numEvents: number, eventRateStatusBarItem: vsc
     return eventRateStatusBarItem
 }
 
-//TODO: This appears to stop the tailing session correctly when the tab closes, but does not dispose of the underlying TextDocument. I think Log data (and the doucment) remains in memory.
 function registerDocumentCloseCallback(
     liveTailSession: LiveTailSession,
     timer: NodeJS.Timer,
     registry: LiveTailSessionRegistry
 ) {
+    //onDidChangeTabs trigger
     vscode.window.tabGroups.onDidChangeTabs((tabEvent) => {
-        if (tabEvent.closed.length > 0) {
-            tabEvent.closed.forEach((tab) => {
-                if (tab.input instanceof vscode.TabInputText) {
-                    if (tab.input.uri.path === liveTailSession.uri.path) {
-                        closeSession(liveTailSession, timer, registry)
-                    }
-                }
-            })
+        console.log('Trigged tabchange event')
+        const isOpen = isLiveTailSessionOpenInAnyTab(liveTailSession)
+        console.log(`is LT Session open: ${isOpen}`)
+        if (!isOpen) {
+            closeSession(liveTailSession, timer, registry)
         }
     })
+}
+
+function isLiveTailSessionOpenInAnyTab(liveTailSession: LiveTailSession) {
+    var isOpen = false
+    vscode.window.tabGroups.all.forEach((tabGroup) => {
+        tabGroup.tabs.forEach((tab) => {
+            if (tab.input instanceof vscode.TabInputText) {
+                console.log(`Tab URI: ${tab.input.uri.toString()}`)
+                console.log(`LiveTailSession URI: ${liveTailSession.uri.toString()}`)
+                console.log(`isEqual: ${liveTailSession.uri.toString() === tab.input.uri.toString()}`)
+                if (liveTailSession.uri.toString() === tab.input.uri.toString()) {
+                    isOpen = true
+                }
+            }
+        })
+    })
+    return isOpen
 }
 
 function startTimer(sessionTimerStatusBarItem: vscode.StatusBarItem): NodeJS.Timer {
