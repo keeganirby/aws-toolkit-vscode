@@ -45,6 +45,10 @@ export async function tailLogGroup(
     }
 
     const liveTailSession = new LiveTailSession(liveTailSessionConfig)
+    if (registry.doesRegistryContainLiveTailSession(liveTailSession.uri)) {
+        await prepareDocument(liveTailSession.uri)
+        return
+    }
     registry.registerLiveTailSession(liveTailSession)
 
     const textDocument = await prepareDocument(liveTailSession.uri)

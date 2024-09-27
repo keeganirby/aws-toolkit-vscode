@@ -10,17 +10,17 @@ export class LiveTailSessionRegistry {
         return (this.#instance ??= new this())
     }
 
-    public constructor(private readonly registry: Map<vscode.Uri, LiveTailSession> = new Map()) {}
+    public constructor(private readonly registry: Map<string, LiveTailSession> = new Map()) {}
 
     public registerLiveTailSession(session: LiveTailSession) {
-        if (this.registry.has(session.uri)) {
+        if (this.doesRegistryContainLiveTailSession(session.uri)) {
             throw new Error(`There is already a LiveTail session registered with uri: ${session.uri}`)
         }
-        this.registry.set(session.uri, session)
+        this.registry.set(this.uriToKey(session.uri), session)
     }
 
     public getLiveTailSessionFromUri(uri: vscode.Uri): LiveTailSession {
-        const session = this.registry.get(uri)
+        const session = this.registry.get(this.uriToKey(uri))
         if (!session) {
             throw new Error(`No LiveTail session registered for uri: ${uri} found.`)
         }
@@ -28,7 +28,15 @@ export class LiveTailSessionRegistry {
     }
 
     public removeLiveTailSessionFromRegistry(uri: vscode.Uri) {
-        this.registry.delete(uri)
+        this.registry.delete(this.uriToKey(uri))
+    }
+
+    public doesRegistryContainLiveTailSession(uri: vscode.Uri): boolean {
+        return this.registry.has(this.uriToKey(uri))
+    }
+
+    private uriToKey(uri: vscode.Uri): string {
+        return uri.toString()
     }
 }
 
