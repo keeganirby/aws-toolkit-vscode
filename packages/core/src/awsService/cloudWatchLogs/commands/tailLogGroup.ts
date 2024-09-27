@@ -53,7 +53,7 @@ export async function tailLogGroup(
     const timer = startTimer(statusBarItems.sessionTimer)
     hideShowStatusBarItemsOnActiveEditor(statusBarItems, textDocument)
 
-    registerTabChangeCallback(liveTailSession, timer, registry)
+    registerTabChangeCallback(liveTailSession, timer, registry, textDocument)
 
     const liveTailResponseStream = await liveTailSession.startLiveTailSession()
     displayTailingSessionDialogueWindow(liveTailSession, timer, registry)
@@ -187,6 +187,7 @@ function closeSession(session: LiveTailSession, timer: NodeJS.Timer, registry: L
 
 async function prepareDocument(uri: vscode.Uri): Promise<vscode.TextDocument> {
     const textDocument = await vscode.workspace.openTextDocument(uri)
+    clearDocument(textDocument)
     await vscode.window.showTextDocument(textDocument, { preview: false })
     vscode.languages.setTextDocumentLanguage(textDocument, 'log')
     return textDocument
@@ -358,13 +359,15 @@ function updateEventRateStatusBar(numEvents: number, eventRateStatusBarItem: vsc
 function registerTabChangeCallback(
     liveTailSession: LiveTailSession,
     timer: NodeJS.Timer,
-    registry: LiveTailSessionRegistry
+    registry: LiveTailSessionRegistry,
+    textDocument: vscode.TextDocument
 ) {
     //onDidChangeTabs triggers when tabs are created, closed, or swapped focus
     vscode.window.tabGroups.onDidChangeTabs((tabEvent) => {
         const isOpen = isLiveTailSessionOpenInAnyTab(liveTailSession)
         if (!isOpen) {
             closeSession(liveTailSession, timer, registry)
+            clearDocument(textDocument)
         }
     })
 }
