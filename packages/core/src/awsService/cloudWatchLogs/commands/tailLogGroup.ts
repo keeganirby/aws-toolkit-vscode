@@ -294,24 +294,13 @@ function shouldScrollTextDocument(textDocument: vscode.TextDocument): boolean {
     return false
 }
 
-export async function scrollTextDocumentToBottom(textDocument: vscode.TextDocument) {
+async function scrollTextDocumentToBottom(textDocument: vscode.TextDocument) {
     const editor = getEditorFromTextDocument(textDocument)
     if (!editor) {
         return
     }
     const topPosition = new vscode.Position(Math.max(editor.document.lineCount - 2, 0), 0)
     const bottomPosition = new vscode.Position(Math.max(editor.document.lineCount - 2, 0), 0)
-
-    editor.revealRange(new vscode.Range(topPosition, bottomPosition), vscode.TextEditorRevealType.Default)
-}
-
-export async function scrollTextDocumentToTop(textDocument: vscode.TextDocument) {
-    const editor = getEditorFromTextDocument(textDocument)
-    if (!editor) {
-        return
-    }
-    const topPosition = new vscode.Position(0, 0)
-    const bottomPosition = new vscode.Position(0, 0)
 
     editor.revealRange(new vscode.Range(topPosition, bottomPosition), vscode.TextEditorRevealType.Default)
 }
