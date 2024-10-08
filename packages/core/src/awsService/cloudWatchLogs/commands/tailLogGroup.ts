@@ -57,7 +57,7 @@ export async function tailLogGroup(
     const timer = startTimer(statusBarItems.sessionTimer)
     hideShowStatusBarItemsOnActiveEditor(statusBarItems, textDocument)
 
-    registerTabChangeCallback(liveTailSession, timer, registry, textDocument)
+    registerTabChangeCallback(liveTailSession, timer, registry, textDocument, statusBarItems)
 
     const liveTailResponseStream = await liveTailSession.startLiveTailSession()
     displayTailingSessionDialogueWindow(liveTailSession, timer, registry)
@@ -364,7 +364,8 @@ function registerTabChangeCallback(
     liveTailSession: LiveTailSession,
     timer: NodeJS.Timer,
     registry: LiveTailSessionRegistry,
-    textDocument: vscode.TextDocument
+    textDocument: vscode.TextDocument,
+    statusBarItems: LiveTailStatusBarItems
 ) {
     //onDidChangeTabs triggers when tabs are created, closed, or swapped focus
     vscode.window.tabGroups.onDidChangeTabs((tabEvent) => {
@@ -372,6 +373,9 @@ function registerTabChangeCallback(
         if (!isOpen) {
             closeSession(liveTailSession, timer, registry)
             clearDocument(textDocument)
+            statusBarItems.sessionTimer.dispose()
+            statusBarItems.eventRate.dispose()
+            statusBarItems.isSampled.dispose()
         }
     })
 }
