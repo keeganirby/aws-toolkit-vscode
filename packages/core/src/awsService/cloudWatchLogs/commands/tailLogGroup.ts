@@ -54,7 +54,7 @@ export async function tailLogGroup(
     const textDocument = await prepareDocument(liveTailSession.uri)
 
     const statusBarItems: LiveTailStatusBarItems = createStatusBarItems()
-    const timer = startTimer(statusBarItems.sessionTimer)
+    const timer = startTimer(statusBarItems.sessionTimer, liveTailSession)
     hideShowStatusBarItemsOnActiveEditor(statusBarItems, textDocument)
 
     registerTabChangeCallback(liveTailSession, timer, registry, textDocument, statusBarItems)
@@ -69,6 +69,12 @@ export async function tailLogGroup(
         statusBarItems.isSampled,
         statusBarItems.eventRate
     )
+}
+
+export async function closeSession(sessionUri: vscode.Uri, registry: LiveTailSessionRegistry) {
+    const session = registry.getLiveTailSessionFromUri(sessionUri)
+    session.stopLiveTailSession()
+    registry.removeLiveTailSessionFromRegistry(sessionUri)
 }
 
 function hideShowStatusBarItemsOnActiveEditor(
@@ -176,17 +182,12 @@ async function displayTailingSessionDialogueWindow(
     const item = await vscode.window.showInformationMessage(message, stopTailing)
     try {
         if (item && item === stopTailing) {
-            closeSession(session, timer, registry)
+            closeSession(session.uri, registry)
+            globals.clock.clearInterval(timer)
         }
     } catch (e) {
         console.log('[EXCEPTION]', e)
     }
-}
-
-function closeSession(session: LiveTailSession, timer: NodeJS.Timer, registry: LiveTailSessionRegistry) {
-    session.stopLiveTailSession()
-    globals.clock.clearInterval(timer)
-    registry.removeLiveTailSessionFromRegistry(session.uri)
 }
 
 async function prepareDocument(uri: vscode.Uri): Promise<vscode.TextDocument> {
@@ -371,7 +372,8 @@ function registerTabChangeCallback(
     vscode.window.tabGroups.onDidChangeTabs((tabEvent) => {
         const isOpen = isLiveTailSessionOpenInAnyTab(liveTailSession)
         if (!isOpen) {
-            closeSession(liveTailSession, timer, registry)
+            closeSession(liveTailSession.uri, registry)
+            globals.clock.clearInterval(timer)
             clearDocument(textDocument)
             statusBarItems.sessionTimer.dispose()
             statusBarItems.eventRate.dispose()
@@ -394,10 +396,9 @@ function isLiveTailSessionOpenInAnyTab(liveTailSession: LiveTailSession) {
     return isOpen
 }
 
-function startTimer(sessionTimerStatusBarItem: vscode.StatusBarItem): NodeJS.Timer {
-    const startTime = Date.now()
+function startTimer(sessionTimerStatusBarItem: vscode.StatusBarItem, liveTailSession: LiveTailSession): NodeJS.Timer {
     return globals.clock.setInterval(() => {
-        const elapsedTime = Date.now() - startTime
+        const elapsedTime = liveTailSession.getLiveTailSessionDuration()
         const timeString = convertToTimeString(elapsedTime)
         sessionTimerStatusBarItem.text = `LiveTail Session Timer: ${timeString}`
     }, 500)

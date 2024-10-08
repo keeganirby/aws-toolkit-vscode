@@ -12,6 +12,8 @@ export class LiveTailSession {
     private logEventFilterPattern?: string
     private _maxLines: number
     private _uri: vscode.Uri
+    private startTime: number | undefined
+    private endTime: number | undefined
 
     static settings = new CloudWatchLogsSettings(Settings.instance)
 
@@ -40,14 +42,29 @@ export class LiveTailSession {
 
     public startLiveTailSession(): Promise<StartLiveTailCommandOutput> {
         const command = this.buildStartLiveTailCommand()
+        this.startTime = Date.now()
+        this.endTime = undefined
         return this.liveTailClient.cwlClient.send(command, {
             abortSignal: this.liveTailClient.abortController.signal,
         })
     }
 
     public stopLiveTailSession() {
+        this.endTime = Date.now()
         this.liveTailClient.abortController.abort()
         this.liveTailClient.cwlClient.destroy()
+    }
+
+    //Returns duraton of LiveTail session in ms.
+    public getLiveTailSessionDuration(): number {
+        if (this.startTime === undefined) {
+            return 0
+        }
+        //Case where the LiveTail session is still running
+        if (this.endTime === undefined) {
+            return Date.now() - this.startTime
+        }
+        return this.endTime - this.startTime
     }
 
     private buildStartLiveTailCommand(): StartLiveTailCommand {

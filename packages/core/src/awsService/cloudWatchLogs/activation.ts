@@ -20,7 +20,7 @@ import { searchLogGroup } from './commands/searchLogGroup'
 import { changeLogSearchParams } from './changeLogSearch'
 import { CloudWatchLogsNode } from './explorer/cloudWatchLogsNode'
 import { loadAndOpenInitialLogStreamFile, LogStreamCodeLensProvider } from './document/logStreamsCodeLensProvider'
-import { clearDocument, tailLogGroup } from './commands/tailLogGroup'
+import { clearDocument, closeSession, tailLogGroup } from './commands/tailLogGroup'
 import { LiveTailSessionRegistry } from './registry/liveTailSessionRegistry'
 import { LiveTailCodeLensProvider } from './document/liveTailCodeLensProvider'
 
@@ -113,6 +113,10 @@ export async function activate(context: vscode.ExtensionContext, configuration: 
                     ? { regionName: node.regionCode, groupName: node.logGroup.logGroupName! }
                     : undefined
             await tailLogGroup(liveTailSessionRegistry, logGroupInfo)
+        }),
+
+        Commands.register('aws.cwl.stopTailingLogGroup', async (document: vscode.TextDocument) => {
+            await closeSession(document.uri, liveTailSessionRegistry)
         }),
 
         Commands.register('aws.cwl.clearDocument', async (document: vscode.TextDocument) => {
