@@ -21,12 +21,6 @@ import { LiveTailSession, LiveTailSessionConfiguration } from '../registry/liveT
 
 const localize = nls.loadMessageBundle()
 
-type LiveTailStatusBarItems = {
-    isSampled: vscode.StatusBarItem
-    eventRate: vscode.StatusBarItem
-    sessionTimer: vscode.StatusBarItem
-}
-
 export async function tailLogGroup(
     registry: LiveTailSessionRegistry,
     logData?: { regionName: string; groupName: string }
@@ -46,29 +40,22 @@ export async function tailLogGroup(
 
     const liveTailSession = new LiveTailSession(liveTailSessionConfig)
     if (registry.doesRegistryContainLiveTailSession(liveTailSession.uri)) {
-        await prepareDocument(liveTailSession.uri)
+        await prepareDocument(liveTailSession)
         return
     }
     registry.registerLiveTailSession(liveTailSession)
 
-    const textDocument = await prepareDocument(liveTailSession.uri)
+    const textDocument = await prepareDocument(liveTailSession)
 
-    const statusBarItems: LiveTailStatusBarItems = createStatusBarItems()
-    const timer = startTimer(statusBarItems.sessionTimer, liveTailSession)
-    hideShowStatusBarItemsOnActiveEditor(statusBarItems, textDocument)
+    const timer = startTimer(liveTailSession)
+    hideShowStatusBarItemsOnActiveEditor(liveTailSession, textDocument)
 
-    registerTabChangeCallback(liveTailSession, timer, registry, textDocument, statusBarItems)
+    registerTabChangeCallback(liveTailSession, timer, registry, textDocument)
 
     const liveTailResponseStream = await liveTailSession.startLiveTailSession()
     displayTailingSessionDialogueWindow(liveTailSession, timer, registry)
 
-    await handleLiveTailResponse(
-        liveTailResponseStream,
-        textDocument,
-        liveTailSession.maxLines,
-        statusBarItems.isSampled,
-        statusBarItems.eventRate
-    )
+    await handleLiveTailResponse(liveTailResponseStream, textDocument, liveTailSession)
 }
 
 export async function closeSession(sessionUri: vscode.Uri, registry: LiveTailSessionRegistry) {
@@ -77,19 +64,16 @@ export async function closeSession(sessionUri: vscode.Uri, registry: LiveTailSes
     registry.removeLiveTailSessionFromRegistry(sessionUri)
 }
 
-function hideShowStatusBarItemsOnActiveEditor(
-    statusBarItems: LiveTailStatusBarItems,
-    textDocument: vscode.TextDocument
-) {
+function hideShowStatusBarItemsOnActiveEditor(session: LiveTailSession, textDocument: vscode.TextDocument) {
     vscode.window.onDidChangeActiveTextEditor((editor) => {
         if (editor?.document == textDocument) {
-            statusBarItems.eventRate.show()
-            statusBarItems.isSampled.show()
-            statusBarItems.sessionTimer.show()
+            session.statusBarItems.eventRate.show()
+            session.statusBarItems.isSampled.show()
+            session.statusBarItems.sessionTimer.show()
         } else {
-            statusBarItems.eventRate.hide()
-            statusBarItems.isSampled.hide()
-            statusBarItems.sessionTimer.hide()
+            session.statusBarItems.eventRate.hide()
+            session.statusBarItems.isSampled.hide()
+            session.statusBarItems.sessionTimer.hide()
         }
     })
 }
@@ -190,20 +174,25 @@ async function displayTailingSessionDialogueWindow(
     }
 }
 
-async function prepareDocument(uri: vscode.Uri): Promise<vscode.TextDocument> {
-    const textDocument = await vscode.workspace.openTextDocument(uri)
+async function prepareDocument(session: LiveTailSession): Promise<vscode.TextDocument> {
+    const textDocument = await vscode.workspace.openTextDocument(session.uri)
     clearDocument(textDocument)
     await vscode.window.showTextDocument(textDocument, { preview: false })
+    showLiveTailSessionStatusBarItems(session)
     vscode.languages.setTextDocumentLanguage(textDocument, 'log')
     return textDocument
+}
+
+function showLiveTailSessionStatusBarItems(session: LiveTailSession) {
+    session.statusBarItems.eventRate.show()
+    session.statusBarItems.isSampled.show()
+    session.statusBarItems.sessionTimer.show()
 }
 
 async function handleLiveTailResponse(
     response: StartLiveTailCommandOutput,
     textDocument: vscode.TextDocument,
-    maxLines: number,
-    isSampledStatusBarItem: vscode.StatusBarItem,
-    eventRateStatusBarItem: vscode.StatusBarItem
+    session: LiveTailSession
 ) {
     if (!response.responseStream) {
         throw Error('response is undefined')
@@ -223,13 +212,16 @@ async function handleLiveTailResponse(
                     //Determine should scroll before adding new lines to doc because large amount of
                     //new lines can push bottom of file out of view before scrolling.
                     const shouldScroll = shouldScrollTextDocument(textDocument)
-                    await updateTextDocumentWithNewLogEvents(formattedLogEvents, textDocument, maxLines)
+                    await updateTextDocumentWithNewLogEvents(formattedLogEvents, textDocument, session.maxLines)
                     if (shouldScroll) {
                         scrollTextDocumentToBottom(textDocument)
                     }
                 }
-                updateIsSampledStatusBar(event.sessionUpdate.sessionMetadata?.sampled!, isSampledStatusBarItem)
-                updateEventRateStatusBar(event.sessionUpdate.sessionResults?.length!, eventRateStatusBarItem)
+                updateIsSampledStatusBar(
+                    event.sessionUpdate.sessionMetadata?.sampled!,
+                    session.statusBarItems.isSampled
+                )
+                updateEventRateStatusBar(event.sessionUpdate.sessionResults?.length!, session.statusBarItems.eventRate)
             } else {
                 console.error('Unknown event type')
             }
@@ -323,36 +315,10 @@ function getEditorFromTextDocument(textDocument: vscode.TextDocument): vscode.Te
     return vscode.window.visibleTextEditors.find((editor) => editor.document === textDocument)
 }
 
-function createStatusBarItems(): LiveTailStatusBarItems {
-    return {
-        sessionTimer: createSessionTimerStatusBar(),
-        isSampled: createIsSampledStatusBar(),
-        eventRate: createEventRateStatusBar(),
-    }
-}
-
-function createSessionTimerStatusBar(): vscode.StatusBarItem {
-    const timerStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 0)
-    timerStatusBarItem.show()
-    return timerStatusBarItem
-}
-
-function createIsSampledStatusBar(): vscode.StatusBarItem {
-    const isSampledStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 0)
-    isSampledStatusBarItem.show()
-    return updateIsSampledStatusBar(false, isSampledStatusBarItem)
-}
-
 function updateIsSampledStatusBar(isSampled: boolean, isSampledStatusBarItem: vscode.StatusBarItem) {
     const text = `Sampled: ${isSampled ? 'Yes' : 'No'}`
     isSampledStatusBarItem.text = text
     return isSampledStatusBarItem
-}
-
-function createEventRateStatusBar(): vscode.StatusBarItem {
-    const eventRateStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 0)
-    eventRateStatusBarItem.show()
-    return updateEventRateStatusBar(0, eventRateStatusBarItem)
 }
 
 function updateEventRateStatusBar(numEvents: number, eventRateStatusBarItem: vscode.StatusBarItem) {
@@ -365,8 +331,7 @@ function registerTabChangeCallback(
     liveTailSession: LiveTailSession,
     timer: NodeJS.Timer,
     registry: LiveTailSessionRegistry,
-    textDocument: vscode.TextDocument,
-    statusBarItems: LiveTailStatusBarItems
+    textDocument: vscode.TextDocument
 ) {
     //onDidChangeTabs triggers when tabs are created, closed, or swapped focus
     vscode.window.tabGroups.onDidChangeTabs((tabEvent) => {
@@ -375,9 +340,6 @@ function registerTabChangeCallback(
             closeSession(liveTailSession.uri, registry)
             globals.clock.clearInterval(timer)
             clearDocument(textDocument)
-            statusBarItems.sessionTimer.dispose()
-            statusBarItems.eventRate.dispose()
-            statusBarItems.isSampled.dispose()
         }
     })
 }
@@ -396,10 +358,10 @@ function isLiveTailSessionOpenInAnyTab(liveTailSession: LiveTailSession) {
     return isOpen
 }
 
-function startTimer(sessionTimerStatusBarItem: vscode.StatusBarItem, liveTailSession: LiveTailSession): NodeJS.Timer {
+function startTimer(liveTailSession: LiveTailSession): NodeJS.Timer {
     return globals.clock.setInterval(() => {
         const elapsedTime = liveTailSession.getLiveTailSessionDuration()
         const timeString = convertToTimeString(elapsedTime)
-        sessionTimerStatusBarItem.text = `LiveTail Session Timer: ${timeString}`
+        liveTailSession.statusBarItems.sessionTimer.text = `LiveTail Session Timer: ${timeString}`
     }, 500)
 }

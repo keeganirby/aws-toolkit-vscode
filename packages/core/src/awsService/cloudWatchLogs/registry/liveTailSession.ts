@@ -5,6 +5,12 @@ import { CloudWatchLogsSettings } from '../cloudWatchLogsUtils'
 import { Settings } from '../../../shared'
 import { createLiveTailURIFromArgs } from './liveTailSessionRegistry'
 
+export type LiveTailStatusBarItems = {
+    isSampled: vscode.StatusBarItem
+    eventRate: vscode.StatusBarItem
+    sessionTimer: vscode.StatusBarItem
+}
+
 export class LiveTailSession {
     private liveTailClient: LiveTailSessionClient
     private _logGroupName: string
@@ -14,6 +20,7 @@ export class LiveTailSession {
     private _uri: vscode.Uri
     private startTime: number | undefined
     private endTime: number | undefined
+    private _statusBarItems: LiveTailStatusBarItems
 
     static settings = new CloudWatchLogsSettings(Settings.instance)
 
@@ -26,6 +33,7 @@ export class LiveTailSession {
         }
         this._maxLines = LiveTailSession.settings.get('liveTailMaxEvents', 10000)
         this._uri = createLiveTailURIFromArgs(configuration)
+        this._statusBarItems = this.createStatusBarItems()
     }
 
     public get maxLines() {
@@ -40,6 +48,10 @@ export class LiveTailSession {
         return this._logGroupName
     }
 
+    public get statusBarItems(): LiveTailStatusBarItems {
+        return this._statusBarItems
+    }
+
     public startLiveTailSession(): Promise<StartLiveTailCommandOutput> {
         const command = this.buildStartLiveTailCommand()
         this.startTime = Date.now()
@@ -51,6 +63,7 @@ export class LiveTailSession {
 
     public stopLiveTailSession() {
         this.endTime = Date.now()
+        this.disposeStatusBarItems()
         this.liveTailClient.abortController.abort()
         this.liveTailClient.cwlClient.destroy()
     }
@@ -86,6 +99,20 @@ export class LiveTailSession {
             logStreamNames: logStreamName ? [logStreamName] : undefined,
             logEventFilterPattern: this.logEventFilterPattern ? this.logEventFilterPattern : undefined,
         })
+    }
+
+    private createStatusBarItems(): LiveTailStatusBarItems {
+        return {
+            sessionTimer: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 0),
+            eventRate: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 1),
+            isSampled: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 2),
+        }
+    }
+
+    private disposeStatusBarItems() {
+        this.statusBarItems.eventRate.dispose()
+        this.statusBarItems.isSampled.dispose()
+        this.statusBarItems.sessionTimer.dispose()
     }
 }
 
