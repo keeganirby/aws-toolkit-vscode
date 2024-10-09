@@ -1,6 +1,6 @@
 import * as vscode from 'vscode'
 import { CloudWatchLogsClient, StartLiveTailCommand, StartLiveTailCommandOutput } from '@aws-sdk/client-cloudwatch-logs'
-import { LogStreamFilterResponse, LogStreamFilterType } from '../liveTailLogStreamSubmenu'
+import { LogStreamFilterResponse, LogStreamFilterType } from '../wizard/liveTailLogStreamSubmenu'
 import { CloudWatchLogsSettings } from '../cloudWatchLogsUtils'
 import { Settings } from '../../../shared'
 import { createLiveTailURIFromArgs } from './liveTailSessionRegistry'

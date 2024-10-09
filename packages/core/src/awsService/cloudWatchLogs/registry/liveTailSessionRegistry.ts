@@ -1,7 +1,7 @@
 import * as vscode from 'vscode'
 import { CLOUDWATCH_LOGS_LT_SCHEME } from '../../../shared/constants'
 import { LiveTailSession, LiveTailSessionConfiguration } from './liveTailSession'
-import { LogStreamFilterType } from '../liveTailLogStreamSubmenu'
+import { LogStreamFilterType } from '../wizard/liveTailLogStreamSubmenu'
 
 export class LiveTailSessionRegistry {
     static #instance: LiveTailSessionRegistry
