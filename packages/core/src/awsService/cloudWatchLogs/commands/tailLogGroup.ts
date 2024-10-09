@@ -211,11 +211,9 @@ async function handleLiveTailResponse(
                 if (formattedLogEvents.length !== 0) {
                     //Determine should scroll before adding new lines to doc because large amount of
                     //new lines can push bottom of file out of view before scrolling.
-                    const shouldScroll = shouldScrollTextDocument(textDocument)
+                    const editorsToScroll = getTextEditorsToScroll(textDocument)
                     await updateTextDocumentWithNewLogEvents(formattedLogEvents, textDocument, session.maxLines)
-                    if (shouldScroll) {
-                        scrollTextDocumentToBottom(textDocument)
-                    }
+                    editorsToScroll.forEach(scrollTextEditorToBottom)
                 }
                 updateIsSampledStatusBar(
                     event.sessionUpdate.sessionMetadata?.sampled!,
@@ -278,29 +276,30 @@ function formatLogEvent(logEvent: LiveTailSessionLogEvent): string {
     return line
 }
 
-function shouldScrollTextDocument(textDocument: vscode.TextDocument): boolean {
-    const editor = vscode.window.visibleTextEditors.find((editor) => editor.document === textDocument)
-    if (!editor) {
-        return false
-    }
+function getTextEditorsToScroll(textDocument: vscode.TextDocument): vscode.TextEditor[] {
+    const visibleEditorsForSession = getVisibleEditorsForSession(textDocument)
+    return visibleEditorsForSession.filter((editor) => shouldScrollTextEditor(textDocument, editor))
+}
+
+function getVisibleEditorsForSession(textDocument: vscode.TextDocument): vscode.TextEditor[] {
+    return vscode.window.visibleTextEditors.filter((editor) => editor.document === textDocument)
+}
+
+function shouldScrollTextEditor(textDocument: vscode.TextDocument, textEditor: vscode.TextEditor): boolean {
     const lineCount = textDocument.lineCount
     const lastLinePos = new vscode.Position(lineCount - 1, 0)
-    const visibleRange = editor?.visibleRanges[0]
-    if (visibleRange?.contains(lastLinePos)) {
+    const visibleRange = textEditor.visibleRanges[0]
+    if (visibleRange.contains(lastLinePos)) {
         return true
     }
     return false
 }
 
-async function scrollTextDocumentToBottom(textDocument: vscode.TextDocument) {
-    const editor = getEditorFromTextDocument(textDocument)
-    if (!editor) {
-        return
-    }
-    const topPosition = new vscode.Position(Math.max(editor.document.lineCount - 2, 0), 0)
-    const bottomPosition = new vscode.Position(Math.max(editor.document.lineCount - 2, 0), 0)
+function scrollTextEditorToBottom(textEditor: vscode.TextEditor) {
+    const topPosition = new vscode.Position(Math.max(textEditor.document.lineCount - 2, 0), 0)
+    const bottomPosition = new vscode.Position(Math.max(textEditor.document.lineCount - 2, 0), 0)
 
-    editor.revealRange(new vscode.Range(topPosition, bottomPosition), vscode.TextEditorRevealType.Default)
+    textEditor.revealRange(new vscode.Range(topPosition, bottomPosition), vscode.TextEditorRevealType.Default)
 }
 
 export async function clearDocument(textDocument: vscode.TextDocument) {
@@ -309,10 +308,6 @@ export async function clearDocument(textDocument: vscode.TextDocument) {
     const endPosition = new vscode.Position(textDocument.lineCount, 0)
     edit.delete(textDocument.uri, new vscode.Range(startPosition, endPosition))
     await vscode.workspace.applyEdit(edit)
-}
-
-function getEditorFromTextDocument(textDocument: vscode.TextDocument): vscode.TextEditor | undefined {
-    return vscode.window.visibleTextEditors.find((editor) => editor.document === textDocument)
 }
 
 function updateIsSampledStatusBar(isSampled: boolean, isSampledStatusBarItem: vscode.StatusBarItem) {
