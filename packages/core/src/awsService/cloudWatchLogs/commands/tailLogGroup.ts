@@ -28,11 +28,11 @@ export async function tailLogGroup(
         region: wizardResponse.regionLogGroupSubmenuResponse.region,
     }
     const session = new LiveTailSession(liveTailSessionConfig)
-    if (registry.has(session.uri)) {
+    if (registry.has(session.uri.toString())) {
         await prepareDocument(session)
         return
     }
-    registry.set(session.uri, session)
+    registry.set(session.uri.toString(), session)
 
     const document = await prepareDocument(session)
     registerTabChangeCallback(session, registry, document)
@@ -42,12 +42,12 @@ export async function tailLogGroup(
 }
 
 export function closeSession(sessionUri: vscode.Uri, registry: LiveTailSessionRegistry) {
-    const session = registry.get(sessionUri)
+    const session = registry.get(sessionUri.toString())
     if (session === undefined) {
         throw new ToolkitError(`No LiveTail session found for URI: ${sessionUri.toString()}`)
     }
     session.stopLiveTailSession()
-    registry.delete(sessionUri)
+    registry.delete(sessionUri.toString())
 }
 
 export async function clearDocument(textDocument: vscode.TextDocument) {
