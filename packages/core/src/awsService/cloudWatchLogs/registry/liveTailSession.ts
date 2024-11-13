@@ -47,6 +47,7 @@ export class LiveTailSession {
     public constructor(configuration: LiveTailSessionConfiguration) {
         this._logGroupArn = configuration.logGroupArn
         this.logStreamFilter = configuration.logStreamFilter
+        this.logEventFilterPattern = configuration.logEventFilterPattern
         this.liveTailClient = {
             cwlClient: new CloudWatchLogsClient({
                 region: configuration.region,
@@ -117,7 +118,7 @@ export class LiveTailSession {
         return this.endTime - this.startTime
     }
 
-    private buildStartLiveTailCommand(): StartLiveTailCommand {
+    public buildStartLiveTailCommand(): StartLiveTailCommand {
         let logStreamNamePrefix = undefined
         let logStreamName = undefined
         if (this.logStreamFilter) {
